@@ -91,19 +91,6 @@ public class teamMain extends Brain {
     receivedMessages = new ArrayList<>(); // Initialisation de la liste de messages
   }
 
-  /**
-   * Détermine à quelle équipe appartient ce robot
-   * @return TEAM_A ou TEAM_B
-   */
-  private int determineTeam() {
-
-    if (isSameDirection(getHeading(),Parameters.EAST)) {
-      return TEAM_A;
-    } 
-
- return TEAM_B;
-}
-
   public void step() {
     //ODOMETRY CODE
     if (isMoving){
@@ -237,7 +224,48 @@ public class teamMain extends Brain {
   private boolean isRoughlySameDirection(double dir1, double dir2){
     return Math.abs(normalizeRadian(dir1)-normalizeRadian(dir2))<FIREANGLEPRECISION;
   }
-  /**
+
+  private void firePosition(double x, double y){
+    if (myX<=x) fire(Math.atan((y-myY)/(double)(x-myX)));
+    else fire(Math.PI+Math.atan((y-myY)/(double)(x-myX)));
+    return;
+  }
+  private boolean onTheWay(double angle){
+    if (myX<=targetX) return isRoughlySameDirection(angle,Math.atan((targetY-myY)/(double)(targetX-myX)));
+    else return isRoughlySameDirection(angle,Math.PI+Math.atan((targetY-myY)/(double)(targetX-myX)));
+  }
+
+    /**
+   * Détermine à quelle équipe appartient ce robot
+   * @return TEAM_A ou TEAM_B
+   */
+  private int determineTeam() {
+
+    if (isSameDirection(getHeading(),Parameters.EAST)) {
+      return TEAM_A;
+    } 
+
+ return TEAM_B;
+}
+
+    /**
+   * Sends a formatted message through broadcast
+   * @param messageType Type of message (FIRE, FALLBACK, etc.)
+   * @param data Array of data to include in the message
+   */
+  private void sendMessage(int messageType, Object... data) {
+    StringBuilder message = new StringBuilder();
+    message.append(whoAmI).append(":").append(TEAM).append(":").append(messageType);
+    
+    for (Object datum : data) {
+      message.append(":").append(datum);
+    }
+    
+    message.append(":").append(OVER);
+    broadcast(message.toString());
+  }
+  
+    /**
    * Traite un message reçu en fonction de son type
    * @param message Le message à traiter
    */
@@ -270,30 +298,5 @@ public class teamMain extends Brain {
         break;
     }
   }
-  private void firePosition(double x, double y){
-    if (myX<=x) fire(Math.atan((y-myY)/(double)(x-myX)));
-    else fire(Math.PI+Math.atan((y-myY)/(double)(x-myX)));
-    return;
-  }
-  private boolean onTheWay(double angle){
-    if (myX<=targetX) return isRoughlySameDirection(angle,Math.atan((targetY-myY)/(double)(targetX-myX)));
-    else return isRoughlySameDirection(angle,Math.PI+Math.atan((targetY-myY)/(double)(targetX-myX)));
-  }
 
-    /**
-   * Sends a formatted message through broadcast
-   * @param messageType Type of message (FIRE, FALLBACK, etc.)
-   * @param data Array of data to include in the message
-   */
-  private void sendMessage(int messageType, Object... data) {
-    StringBuilder message = new StringBuilder();
-    message.append(whoAmI).append(":").append(TEAM).append(":").append(messageType);
-    
-    for (Object datum : data) {
-      message.append(":").append(datum);
-    }
-    
-    message.append(":").append(OVER);
-    broadcast(message.toString());
-  }
 }
