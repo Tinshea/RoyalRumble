@@ -15,7 +15,7 @@ import java.util.ArrayList;
 
 public class teamMain extends Brain {
   //---PARAMETERS---//
-  private static final double ANGLEPRECISION = 0.01;
+  private static final double ANGLEPRECISION = 0.1;
   private static final double FIREANGLEPRECISION = Math.PI/(double)6;
 
   private static final int ALPHA = 0x1EADDA;
@@ -27,15 +27,25 @@ public class teamMain extends Brain {
   private static final int FIRE = 0xB52;
   private static final int FALLBACK = 0xFA11BAC;
   private static final int ROGER = 0x0C0C0C0C;
+  private static final int COMBAT = 0xB52B52;
   private static final int OVER = 0xC00010FF;
 
   private static final int TURNSOUTHTASK = 1;
   private static final int MOVETASK = 2;
   private static final int TURNLEFTTASK = 3;
   private static final int SINK = 0xBADC0DE1;
-
+  
+  // Nouveaux états pour la formation triangulaire
+  private static final int TRIANGLE_FORMATION = 4;
+  private static final int MOVE_TO_POSITION = 5;
+  private static final int TURN_TO_POSITION = 6;
+  private static final int FINAL_ORIENTATION = 7; // Nouvel état pour l'orientation finale
+  
   private static final int TEAM_A = 0;
   private static final int TEAM_B = 1;
+
+  // Paramètres de la formation triangulaire
+  private static final double TRIANGLE_SIDE = 50; // Distance entre les robots
 
   //---VARIABLES---//
   private int state;
@@ -51,8 +61,11 @@ public class teamMain extends Brain {
   private boolean friendlyFire;
   private ArrayList<String> receivedMessages; // Pour stocker les messages reçus
   private int myTeam; // Pour stocker l'équipe du robot
-  private int arenaWidth =3000;
-
+  
+  // Variables pour la formation triangulaire
+  private double formationX, formationY; // Position cible dans la formation
+  private boolean positionReached = false;
+  
 
   //---CONSTRUCTORS---//
   public teamMain() { super(); }
@@ -81,34 +94,50 @@ public class teamMain extends Brain {
     myTeam = determineTeam();
 
     //INIT
-    state=TURNSOUTHTASK;
+    state = TRIANGLE_FORMATION; // On commence par la formation en triangle
     isMoving=false;
     fireOrder=false;
     fireRythm=0;
-    oldAngle=myGetHeading();
-    targetX=1500;
-    targetY=1000;
+    oldAngle=getHeading();
     receivedMessages = new ArrayList<>(); // Initialisation de la liste de messages
+    
+    // Définir les positions cibles pour la formation triangulaire
+    double centerX = myX + (myTeam == TEAM_A ? 100 : -100);
+    double centerY = myY;
+    
+    if (whoAmI == BETA) {
+      formationX = centerX;
+      formationY = centerY;
+    } else if (whoAmI == GAMMA) {
+      formationX = centerX - TRIANGLE_SIDE ;
+      formationY = centerY - TRIANGLE_SIDE * Math.sqrt(3) / 2;
+    } else if (whoAmI == ALPHA) {
+      formationX = centerX - TRIANGLE_SIDE ;
+      formationY = centerY + TRIANGLE_SIDE * Math.sqrt(3) / 2;
+    }
+    
+    targetX = formationX;
+    targetY = formationY;
   }
 
   public void step() {
     //ODOMETRY CODE
     if (isMoving){
-      myX+=Parameters.teamAMainBotSpeed*Math.cos(myGetHeading());
-      myY+=Parameters.teamAMainBotSpeed*Math.sin(myGetHeading());
+      myX+=Parameters.teamAMainBotSpeed*Math.cos(getHeading());
+      myY+=Parameters.teamAMainBotSpeed*Math.sin(getHeading());
       isMoving=false;
     }
     //DEBUG MESSAGE
     boolean debug=true;
     if (debug && whoAmI == ALPHA && state!=SINK) {
       String teamName = (myTeam == TEAM_A) ? "Team A" : "Team B";
-      sendLogMessage("#ALPHA [" + teamName + "] *thinks* (x,y)= (" + (int)myX + ", " + (int)myY + ") theta= " + (int)(myGetHeading()*180/(double)Math.PI) + "°. #State= " + state);
+      sendLogMessage("#ALPHA. #State= " + state + " target= (" + (int)targetX + ", " + (int)targetY + ") current= (" + (int)myX + ", " + (int)myY + ")");
     }
     if (debug && whoAmI == BETA && state!=SINK) {
-      sendLogMessage("#BETA *thinks* (x,y)= ("+(int)myX+", "+(int)myY+") theta= "+(int)(myGetHeading()*180/(double)Math.PI)+"Â°. #State= "+state);
+      sendLogMessage("#BETA. #State= " + state + " target= (" + (int)targetX + ", " + (int)targetY + ") current= (" + (int)myX + ", " + (int)myY + ")");
     }
     if (debug && whoAmI == GAMMA && state!=SINK) {
-      sendLogMessage("#GAMMA *thinks* (x,y)= ("+(int)myX+", "+(int)myY+") theta= "+(int)(myGetHeading()*180/(double)Math.PI)+"Â°. #State= "+state);
+      sendLogMessage("#GAMMA. #State= " + state + " target= (" + (int)targetX + ", " + (int)targetY + ") current= (" + (int)myX + ", " + (int)myY + ")");
     }
     if (debug && fireOrder) sendLogMessage("Firing enemy!!");
 
@@ -152,6 +181,45 @@ public class teamMain extends Brain {
     }
     fireRythm++;
     if (fireRythm>=Parameters.bulletFiringLatency) fireRythm=0;
+    
+    // Formation triangulaire
+    if (state == TRIANGLE_FORMATION) {
+      // Vérifier si la position est atteinte
+      double distToTarget = Math.sqrt(Math.pow(myX - formationX, 2) + Math.pow(myY - formationY, 2));
+      
+      if (distToTarget < 20) { // Si on est assez proche de la position cible
+        positionReached = true;
+        state = FINAL_ORIENTATION; // Passer à l'orientation finale au lieu de SINK
+        return;
+      } else {
+        // Utiliser la nouvelle fonction pour se déplacer vers la cible
+        moveToCoordinates(formationX, formationY);
+        return;
+      }
+    }
+    
+    // Nouvel état pour l'orientation finale selon l'équipe
+    if (state == FINAL_ORIENTATION) {
+      double targetDirection = (myTeam == TEAM_A) ? Parameters.EAST : Parameters.WEST;
+      
+      if (isSameDirection(getHeading(), targetDirection)) {
+        // Orientation finale atteinte
+        state = MOVETASK;
+        sendMessage(COMBAT, (Object) null);
+        return;
+      } else {
+        // Déterminer le sens de rotation pour atteindre l'orientation finale
+        double angleDiff = normalizeAngle(targetDirection - getHeading());
+        if (angleDiff < Math.PI) {
+          stepTurn(Parameters.Direction.RIGHT);
+        } else {
+          stepTurn(Parameters.Direction.LEFT);
+        }
+        return;
+      }
+    }
+    
+    // États existants
     if (state==TURNSOUTHTASK && !(isSameDirection(getHeading(),Parameters.SOUTH))) {
       stepTurn(Parameters.Direction.RIGHT);
       return;
@@ -167,7 +235,7 @@ public class teamMain extends Brain {
     }
     if (state==MOVETASK && detectFront().getObjectType()==IFrontSensorResult.Types.WALL) {
       state=TURNLEFTTASK;
-      oldAngle=myGetHeading();
+      oldAngle=getHeading();
       stepTurn(Parameters.Direction.LEFT);
       return;
     }
@@ -183,7 +251,7 @@ public class teamMain extends Brain {
 
 
 
-    if (state==0xB52){
+    if (state==FIRE){
       if (fireRythm==0) {
         firePosition(700,1500);
         fireRythm++;
@@ -198,31 +266,63 @@ public class teamMain extends Brain {
     }
 
     if (state==SINK) {
-      myMove();
       return;
     }
     if (true) {
       return;
     }
   }
+  
+  /**
+   * Déplace le robot vers les coordonnées spécifiées
+   * @param targetX Coordonnée X cible
+   * @param targetY Coordonnée Y cible
+   * @return true si un mouvement a été effectué, false sinon
+   */
+  private boolean moveToCoordinates(double targetX, double targetY) {
+    double angleToTarget = Math.atan2(targetY - myY, targetX - myX);
+    double currentHeading = getHeading();
+    
+    // Si l'angle actuel est différent de l'angle cible, tourner
+    if (!isSameDirection(currentHeading, angleToTarget)) {
+      if (normalizeAngle(angleToTarget - currentHeading) < 0) {
+        stepTurn(Parameters.Direction.LEFT);
+      } else {
+        stepTurn(Parameters.Direction.RIGHT);
+      }
+      return false;
+    }
+    // Si on est bien aligné, avancer
+    else {
+      myMove();
+      return true;
+    }
+  }
+  
+  
+
   private void myMove(){
     isMoving=true;
     move();
   }
-  private double myGetHeading(){
-    return normalizeRadian(getHeading());
+
+ // ---UTILITIES---//
+  // Normaliser un angle pour qu'il soit entre -PI et PI
+  private double normalizeAngle(double angle) {
+    while (angle > Math.PI)
+      angle -= 2 * Math.PI;
+    while (angle < -Math.PI)
+      angle += 2 * Math.PI;
+    return Math.abs(angle);
   }
-  private double normalizeRadian(double angle){
-    double result = angle;
-    while(result<0) result+=2*Math.PI;
-    while(result>=2*Math.PI) result-=2*Math.PI;
-    return result;
-  }
-  private boolean isSameDirection(double dir1, double dir2){
-    return Math.abs(normalizeRadian(dir1)-normalizeRadian(dir2))<ANGLEPRECISION;
+
+  private boolean isSameDirection(double dir1, double dir2) {
+    double diff = normalizeAngle(dir1 - dir2);
+    return diff < ANGLEPRECISION;
   }
   private boolean isRoughlySameDirection(double dir1, double dir2){
-    return Math.abs(normalizeRadian(dir1)-normalizeRadian(dir2))<FIREANGLEPRECISION;
+    // Utiliser la valeur absolue pour une comparaison plus robuste
+    return Math.abs(normalizeAngle(dir1)-normalizeAngle(dir2))<FIREANGLEPRECISION;
   }
 
   private void firePosition(double x, double y){
@@ -257,8 +357,10 @@ public class teamMain extends Brain {
     StringBuilder message = new StringBuilder();
     message.append(whoAmI).append(":").append(TEAM).append(":").append(messageType);
     
-    for (Object datum : data) {
+    if (data != null) {
+      for (Object datum : data) {
       message.append(":").append(datum);
+      }
     }
     
     message.append(":").append(OVER);

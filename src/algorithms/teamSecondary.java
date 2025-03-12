@@ -25,6 +25,7 @@ public class teamSecondary extends Brain {
   private static final int FIRE = 0xB52;
   private static final int FALLBACK = 0xFA11BAC;
   private static final int ROGER = 0x0C0C0C0C;
+  private static final int COMBAT = 0xB52B52;
   private static final int OVER = 0xC00010FF;
 
   // ---Tâches---//
@@ -228,8 +229,10 @@ public class teamSecondary extends Brain {
     StringBuilder message = new StringBuilder();
     message.append(whoAmI).append(":").append(TEAM).append(":").append(messageType);
 
-    for (Object datum : data) {
+    if (data != null) {
+      for (Object datum : data) {
       message.append(":").append(datum);
+      }
     }
 
     message.append(":").append(OVER);
@@ -259,6 +262,10 @@ public class teamSecondary extends Brain {
       case ROGER:
         // Traite un message d'acquittement
         // À implémenter selon les besoins
+        break;
+      
+      case COMBAT: 
+        state = MOVETASK;
         break;
 
       default:
