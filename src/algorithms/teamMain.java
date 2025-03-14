@@ -15,7 +15,7 @@ import java.util.ArrayList;
 
 public class teamMain extends Brain {
   //---PARAMETERS---//
-  private static final double ANGLEPRECISION = 0.1;
+  private static final double ANGLEPRECISION = 0.05;
   private static final double FIREANGLEPRECISION = Math.PI/(double)6;
 
   private static final int ALPHA = 0x1EADDA;
@@ -29,6 +29,7 @@ public class teamMain extends Brain {
   private static final int ROGER = 0x0C0C0C0C;
   private static final int COMBAT = 0xB52B52;
   private static final int OVER = 0xC00010FF;
+  private static final int DODGE = 0xD0D6E;
 
   private static final int TURNSOUTHTASK = 1;
   private static final int MOVETASK = 2;
@@ -218,6 +219,21 @@ public class teamMain extends Brain {
         return;
       }
     }
+
+    if (state != DODGE && (detectFront().getObjectType() == IFrontSensorResult.Types.WALL || detectFront().getObjectType() == IFrontSensorResult.Types.Wreck)) {
+      state = DODGE;
+      IFrontSensorResult frontSensorResult = detectFront();
+      double obstacleX = myX + Parameters.teamAMainBotSpeed * Math.cos(getHeading());
+      double obstacleY = myY + Parameters.teamAMainBotSpeed * Math.sin(getHeading());
+      sendMessage(DODGE, obstacleX, obstacleY);
+      sendLogMessage("DODGE state activated. Obstacle detected at (" + obstacleX + ", " + obstacleY + ")");
+      return;
+    }
+
+    if(state == DODGE){
+      moveBack();
+      return;
+    }
     
     // États existants
     if (state==TURNSOUTHTASK && !(isSameDirection(getHeading(),Parameters.SOUTH))) {
@@ -392,6 +408,12 @@ public class teamMain extends Brain {
       case ROGER:
         // Traite un message d'acquittement
         // À implémenter selon les besoins
+        break;
+      
+      case DODGE:
+        targetX = Double.parseDouble(parts[3]);
+        targetY = Double.parseDouble(parts[4]);
+        state = DODGE;
         break;
         
       default:
