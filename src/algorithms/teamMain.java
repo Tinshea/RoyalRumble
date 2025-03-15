@@ -407,7 +407,8 @@ public class teamMain extends Brain {
         
       case ROGER:
         // Traite un message d'acquittement
-        // À implémenter selon les besoins
+        // Send coordinates of Beta
+        sendMessage(ROGER, myX, myY);
         break;
       
       case DODGE:

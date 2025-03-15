@@ -27,7 +27,7 @@ public class teamSecondary extends Brain {
   private static final int ROGER = 0x0C0C0C0C;
   private static final int COMBAT = 0xB52B52;
   private static final int OVER = 0xC00010FF;
-
+  
   // ---Tâches---//
   // ---Position initiale de l'équipe---//
   private static final int TURNLEFTTASKINIT1 = 1;
@@ -36,7 +36,9 @@ public class teamSecondary extends Brain {
   private static final int TURNRIGHTTASKINIT2 = 4;
 
   private static final int MOVETASK = 5;
-  private static final int SINK = 0xBADC0DE1;
+  private static final int FOLLOWTASK = 6;
+  private static final int FLEE = 7;
+  private static final int SINK =  0xBADC0DE1;
 
   private static final int TEAM_A = 0;
   private static final int TEAM_B = 1;
@@ -94,24 +96,82 @@ public class teamSecondary extends Brain {
     // DEBUG MESSAGE
     if (whoAmI == ROCKY) {
       String teamName = (myTeam == TEAM_A) ? "Team A" : "Team B";
-      sendLogMessage("#ROCKY " + teamName + " State: " + state + " south :" + getHeading());
+      sendLogMessage("#ROCKY " + teamName + " State: " + state  );
     } else {
       String teamName = (myTeam == TEAM_A) ? "Team A" : "Team B";
-      sendLogMessage("#MARIO " + teamName + " State: " + state + " north :" + getHeading());
+      sendLogMessage("#MARIO " + teamName + " State: " + state );
     }
 
+  
+    
     // RADAR DETECTION
-    // s'arrete si il est trop proche d'un ennemi
-    for (IRadarResult o : detectRadar()) {
-      if (o.getObjectType() == IRadarResult.Types.OpponentMainBot
-          || o.getObjectType() == IRadarResult.Types.OpponentSecondaryBot) {
-        double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-        double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-        sendMessage(FIRE, enemyX, enemyY);
-      }
-      if (o.getObjectDistance() <= 100) {
+    // Track if we found enemy in this radar scan
+    boolean enemyDetected = false;
 
+    for (IRadarResult o : detectRadar()) {
+      // Detect and dodge bullets - highest priority
+      if (o.getObjectType() == IRadarResult.Types.BULLET) {
+        // Log the bullet distance and take evasive action
+        double bulletDistance = o.getObjectDistance();
+        System.out.println("BULLET DETECTED! Distance: " + bulletDistance);
+        
+        // Dodge bullet by moving perpendicular to its direction
+        stepTurn(Parameters.Direction.RIGHT);
       }
+
+
+      // Detect enemies and send fire message
+      if (o.getObjectType() == IRadarResult.Types.OpponentMainBot
+        || o.getObjectType() == IRadarResult.Types.OpponentSecondaryBot) {
+      double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
+      double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
+      sendMessage(FIRE, enemyX, enemyY);
+      enemyDetected = true;
+      }
+      
+      // Check for wrecks - if an enemy became a wreck, it's dead
+      if (o.getObjectType() == IRadarResult.Types.Wreck && state == FOLLOWTASK) {
+      sendLogMessage("Enemy destroyed! Looking for new targets");
+      state = MOVETASK; // Reset to movement state to find new enemies
+      }
+      
+      // Follow MainBot if detected
+      if (o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
+      state = FOLLOWTASK;
+      }
+      
+      // Handle orientation and movement towards enemy
+      if (state == FOLLOWTASK && o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
+      // Track enemy as it moves
+      double enemyDirection = o.getObjectDirection();
+      double headingDiff = normalizeAngle(enemyDirection - getHeading());
+      
+      // Always adjust orientation to keep tracking the enemy
+      // Even for small deviations in enemy movement
+      if (Math.abs(headingDiff) > 0.2) {
+        // Turn towards enemy - continuous tracking
+        if (headingDiff > 0) {
+          stepTurn(Parameters.Direction.RIGHT);
+        } else {
+          stepTurn(Parameters.Direction.LEFT);
+        }
+        sendLogMessage("Tracking enemy movement");
+        return; // Exit to complete tracking adjustment first
+      }
+      
+      // Then decide whether to approach or back away
+      if (o.getObjectDistance() <= 500) {
+        moveBack();
+      } else {
+        myMove();
+      }
+      }
+    }
+    
+    // If we're following an enemy but didn't detect it this scan, reset to search mode
+    if (state == FOLLOWTASK && !enemyDetected) {
+      sendLogMessage("Enemy lost! Searching for new target");
+      state = MOVETASK;
     }
 
     // COMMUNICATION
@@ -178,6 +238,7 @@ public class teamSecondary extends Brain {
     // --- AUTOMATE FIN DE POSITIONNEMENT ---//
 
     if (state == SINK) {
+      state = MOVETASK;
       return;
     }
     if (true) {
@@ -249,10 +310,7 @@ public class teamSecondary extends Brain {
     int messageType = Integer.parseInt(parts[2]);
     switch (messageType) {
       case FIRE:
-        // Traite un message de tir
-        // Le robot secondaire ne tire pas mais peut réagir d'une autre façon
-        sendLogMessage("Received FIRE message at coordinates: " + parts[3] + ", " + parts[4]);
-        break;
+      // Do nothing 
 
       case FALLBACK:
         // Traite un message de repli
