@@ -113,7 +113,7 @@ public class teamSecondary extends Brain {
       if (o.getObjectType() == IRadarResult.Types.BULLET) {
         // Log the bullet distance and take evasive action
         double bulletDistance = o.getObjectDistance();
-        System.out.println("BULLET DETECTED! Distance: " + bulletDistance);
+        // System.out.println("BULLET DETECTED! Distance: " + bulletDistance);
         
         // Dodge bullet by moving perpendicular to its direction
         stepTurn(Parameters.Direction.RIGHT);
