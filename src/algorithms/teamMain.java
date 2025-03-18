@@ -17,7 +17,7 @@ public class teamMain extends Brain {
 
   // --- CONSTANTES ---
   // Précision
-  private static final double ANGLE_PRECISION = 0.05;
+  private static final double ANGLE_PRECISION = 0.01; 
   private static final double FIRE_ANGLE_PRECISION = Math.PI / 6.0;
 
   // Identifiants de robot
@@ -56,7 +56,7 @@ public class teamMain extends Brain {
   private static final double TRIANGLE_SIDE = 250;  // Distance entre robots
 
   // Paramètres d'odométrie
-  private static final double COLLISION_THRESHOLD = 50;
+  private static final double COLLISION_THRESHOLD = 105;
   private static final double POSITION_CONFIDENCE = 0.9;
   private static final int RECALIBRATION_INTERVAL = 100;
   private static final double ARENA_WIDTH = 3000;
@@ -122,10 +122,11 @@ public class teamMain extends Brain {
     receivedMessages = new ArrayList<>();
     
     // Définir la position cible de la formation triangulaire
-    double centerX = myX + (myTeam == TEAM_A ? 300 : -300);
-    double centerY = myY;
+    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 300 : -300);
+    double centerY = Parameters.teamAMainBot2InitY;
+
     double[] formationPosition = calculateFormationPosition(centerX, centerY, whoAmI);
-    formationX = formationPosition[0];
+    formationX = formationPosition[0]; 
     formationY = formationPosition[1];
     
     // Initialisation pour l'odométrie
@@ -166,17 +167,6 @@ public class teamMain extends Brain {
       return;
     }
     
-    // Mise à jour de la position selon le déplacement effectué
-    if (isMoving) {
-      myX += Parameters.teamAMainBotSpeed * Math.cos(getHeading());
-      myY += Parameters.teamAMainBotSpeed * Math.sin(getHeading());
-      isMoving = false;
-    } else if (isMovingBack) {
-      myX -= Parameters.teamAMainBotSpeed * Math.cos(getHeading());
-      myY -= Parameters.teamAMainBotSpeed * Math.sin(getHeading());
-      isMovingBack = false;
-    }
-    
     logDebugMessages();
     
     // Communication : traiter les messages entrants
@@ -184,7 +174,6 @@ public class teamMain extends Brain {
     
     // Détection radar et engagement ennemi
     checkTeamCollision();
-    checkEnnemie();
     freeze = false;
     friendlyFire = true;
     for (IRadarResult o : detectRadar()) {
@@ -223,10 +212,10 @@ public class teamMain extends Brain {
     fireRythm = (fireRythm + 1) % Parameters.bulletFiringLatency;
     
     // Gestion de l'état d'engagement ennemi
-    if (state == ENEMY_ENGAGEMENT) {
-      handleEnemyEngagement();
-      return;
-    }
+    // if (state == ENEMY_ENGAGEMENT) {
+    //   handleEnemyEngagement();
+    //   return;
+    // }
     
     // Formation triangulaire
     if (state == TRIANGLE_FORMATION) {
@@ -263,7 +252,7 @@ public class teamMain extends Brain {
     
     // Détection d'obstacles (épaves) avec le radar
     for (IRadarResult o : detectRadar()) {
-      if (state != DODGE && o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 150) {
+      if (state != DODGE && ((o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 150 )|| checkEnnemie())) {
         state = DODGE;
         double obstacleX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
         double obstacleY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
@@ -337,7 +326,7 @@ public class teamMain extends Brain {
     
     if (state == FIRE) {
       if (fireRythm == 0) {
-        firePosition(700, 1500);
+        firePosition(targetX, targetY);
         fireRythm++;
         return;
       }
@@ -426,9 +415,9 @@ public class teamMain extends Brain {
         if (normalizeAngle(targetDirection - getHeading()) < Math.PI)
           stepTurn(Parameters.Direction.RIGHT);
         else
-          stepTurn(Parameters.Direction.LEFT);
+            stepTurn(Parameters.Direction.LEFT);
         return false;
-      } else {
+      } else {  
         myMove();
         return true;
       }
@@ -560,7 +549,14 @@ public class teamMain extends Brain {
         } else {
           return;
         }
-        double obstacleY = obstacleYtmp < betaY ? betaY + 500 : betaY - 500;
+        double obstacleY = obstacleYtmp < betaY ? betaY + 300 : betaY - 300;
+        // if (whoAmI == BETA) {
+        //   System.out.println("Beta obstacle position: " + obstacleX + ", " + obstacleY);
+        // } else if (whoAmI == ALPHA) {
+        //   System.out.println("Alpha obstacle position: " + obstacleX + ", " + obstacleY);
+        // } else if (whoAmI == GAMMA) {
+        //   System.out.println("Gamma obstacle position: " + obstacleX + ", " + obstacleY);
+        // }
         double[] pos = calculateFormationPosition(obstacleX, obstacleY, whoAmI);
         formationX = pos[0];
         formationY = pos[1];
@@ -589,7 +585,7 @@ public class teamMain extends Brain {
     for (IRadarResult o : detectRadar()) {
       if (o.getObjectType() == IRadarResult.Types.TeamMainBot ||
           o.getObjectType() == IRadarResult.Types.TeamSecondaryBot) {
-        if (o.getObjectDistance() <= 60 && onTheWay(o.getObjectDirection())) {
+        if (o.getObjectDistance() <= 150 && onTheWay(Math.PI)) {
           return true;
         }
       }
@@ -605,10 +601,10 @@ public class teamMain extends Brain {
       position[1] = centerY;
     } else if (robotId == GAMMA) {
       position[0] = centerX - TRIANGLE_SIDE;
-      position[1] = centerY - (TRIANGLE_SIDE * 0.75) * Math.sqrt(3) / 2;
+      position[1] = centerY - (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
     } else if (robotId == ALPHA) {
       position[0] = centerX - TRIANGLE_SIDE;
-      position[1] = centerY + (TRIANGLE_SIDE * 0.75) * Math.sqrt(3) / 2;
+      position[1] = centerY + (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
     }
     return position;
   }
@@ -663,11 +659,8 @@ public class teamMain extends Brain {
         lastMovement[0] = plannedDX;
         lastMovement[1] = plannedDY;
       } else {
-        myX += plannedDX * 0.3;
-        myY += plannedDY * 0.3;
         estimatedErrorX += plannedDX * 0.7;
         estimatedErrorY += plannedDY * 0.7;
-        sendLogMessage("Collision detected! Position may be inaccurate.");
       }
       isMoving = false;
     } else if (isMovingBack) {
@@ -679,8 +672,6 @@ public class teamMain extends Brain {
         lastMovement[0] = plannedDX;
         lastMovement[1] = plannedDY;
       } else {
-        myX += plannedDX * 0.3;
-        myY += plannedDY * 0.3;
         estimatedErrorX += plannedDX * 0.7;
         estimatedErrorY += plannedDY * 0.7;
         sendLogMessage("Collision detected during backward movement!");
@@ -691,21 +682,12 @@ public class teamMain extends Brain {
     estimatedErrorX *= 1.01;
     estimatedErrorY *= 1.01;
     
-    stepsSinceRecalibration++;
-    if (stepsSinceRecalibration >= RECALIBRATION_INTERVAL) {
-      recalibratePosition();
-      stepsSinceRecalibration = 0;
-    }
     refinePositionWithRadar();
   }
   
-  private boolean detectCollision() {
-    if (detectFront().getObjectType() != IFrontSensorResult.Types.NOTHING && isMoving) {
-      collisionDetected = true;
-      return true;
-    }
+  private boolean detectCollision() {    
     for (IRadarResult o : detectRadar()) {
-      if (o.getObjectDistance() < COLLISION_THRESHOLD &&
+      if (isMoving && o.getObjectDistance() < COLLISION_THRESHOLD &&
           isRoughlySameDirection(o.getObjectDirection(), getHeading())) {
         collisionDetected = true;
         return true;
@@ -713,80 +695,6 @@ public class teamMain extends Brain {
     }
     collisionDetected = false;
     return false;
-  }
-  
-  private void recalibratePosition() {
-    if (Math.hypot(estimatedErrorX, estimatedErrorY) > 100) {
-      for (IRadarResult o : detectRadar()) {
-        if (o.getObjectType() == IRadarResult.Types.Wreck) {
-          double objectDistance = o.getObjectDistance();
-          if (objectDistance < 300) {
-            double wreckX = myX + objectDistance * Math.cos(o.getObjectDirection());
-            double wreckY = myY + objectDistance * Math.sin(o.getObjectDirection());
-            if (isNearMapBoundary(wreckX, wreckY)) {
-              double correctionX = (wreckX < ARENA_WIDTH / 4) ? wreckX - 100 : 
-                                     (wreckX > 3 * ARENA_WIDTH / 4) ? wreckX + 100 : wreckX;
-              double correctionY = (wreckY < ARENA_HEIGHT / 4) ? wreckY - 100 : 
-                                     (wreckY > 3 * ARENA_HEIGHT / 4) ? wreckY + 100 : wreckY;
-              myX = myX * 0.3 + correctionX * 0.7;
-              myY = myY * 0.3 + correctionY * 0.7;
-              estimatedErrorX = 0;
-              estimatedErrorY = 0;
-              sendLogMessage("Position recalibrated using wreck reference at (" + (int) wreckX + "," + (int) wreckY + ")");
-            }
-          }
-        }
-        double objectDistance = o.getObjectDistance();
-        if (objectDistance < 200) {
-          double objectX = myX + objectDistance * Math.cos(o.getObjectDirection());
-          double objectY = myY + objectDistance * Math.sin(o.getObjectDirection());
-          if (isVeryCloseToMapBoundary(objectX, objectY)) {
-            snapToMapBoundary(objectDistance, o.getObjectDirection());
-            estimatedErrorX = 0;
-            estimatedErrorY = 0;
-            sendLogMessage("Position recalibrated using boundary reference.");
-          }
-        }
-      }
-      if (detectFront().getObjectType() == IFrontSensorResult.Types.WALL) {
-        double wallDistance = Parameters.teamAMainBotFrontalDetectionRange;
-        double wallX = myX + wallDistance * Math.cos(getHeading());
-        double wallY = myY + wallDistance * Math.sin(getHeading());
-        if (isVeryCloseToMapBoundary(wallX, wallY)) {
-          if (isRoughlySameDirection(getHeading(), 0))
-            myX = ARENA_WIDTH - wallDistance - Parameters.teamAMainBotRadius;
-          else if (isRoughlySameDirection(getHeading(), Math.PI))
-            myX = wallDistance + Parameters.teamAMainBotRadius;
-          else if (isRoughlySameDirection(getHeading(), Math.PI / 2))
-            myY = ARENA_HEIGHT - wallDistance - Parameters.teamAMainBotRadius;
-          else if (isRoughlySameDirection(getHeading(), -Math.PI / 2))
-            myY = wallDistance + Parameters.teamAMainBotRadius;
-          estimatedErrorX = 0;
-          estimatedErrorY = 0;
-          sendLogMessage("Position recalibrated using front wall detection.");
-        }
-      }
-    }
-  }
-  
-  private boolean isVeryCloseToMapBoundary(double x, double y) {
-    return (x < 20 || x > ARENA_WIDTH - 20 || y < 20 || y > ARENA_HEIGHT - 20);
-  }
-  
-  private boolean isNearMapBoundary(double x, double y) {
-    return (x < 50 || x > ARENA_WIDTH - 50 || y < 50 || y > ARENA_HEIGHT - 50);
-  }
-  
-  private void snapToMapBoundary(double wallDistance, double wallDirection) {
-    double normalizedDirection = normalizeAngle(wallDirection);
-    if (isRoughlySameDirection(normalizedDirection, 0))
-      myX = ARENA_WIDTH - wallDistance;
-    else if (isRoughlySameDirection(normalizedDirection, Math.PI))
-      myX = wallDistance;
-    else if (isRoughlySameDirection(normalizedDirection, Math.PI / 2))
-      myY = ARENA_HEIGHT - wallDistance;
-    else if (isRoughlySameDirection(normalizedDirection, -Math.PI / 2))
-      myY = wallDistance;
   }
   
   private void refinePositionWithRadar() {
@@ -829,7 +737,6 @@ private boolean checkEnnemie() {
         lastEnemyY = myY + distance * Math.sin(o.getObjectDirection());
         sendMessage(FIRE, lastEnemyX, lastEnemyY, myX, myY);
         if (state != TRIANGLE_FORMATION && state != FINAL_ORIENTATION) {
-          sendLogMessage("Enemy detected! Switching to combat formation.");
           state = ENEMY_ENGAGEMENT;
           enemyEngagementCounter = 0;
           combatFormationReady = false;
