@@ -16,6 +16,10 @@ import java.util.ArrayList;
 public class teamSecondary extends Brain {
   // ---PARAMETERS---//
   private static final double ANGLEPRECISION = 0.01;
+  private static final double COLLISION_THRESHOLD = 110;
+  private static final double ARENA_WIDTH = 3000;
+  private static final double ARENA_HEIGHT = 2000;
+  private static final double SAFETY_MARGIN = 100.0;
 
   private static final int ROCKY = 0x1EADDA;
   private static final int MARIO = 0x5EC0;
@@ -48,6 +52,7 @@ public class teamSecondary extends Brain {
   private double oldAngle;
   private double myX, myY;
   private boolean isMoving;
+  private boolean isMovingBack;
   private int whoAmI;
   private int myTeam; // Pour stocker l'équipe du robot
   private ArrayList<String> receivedMessages; // Pour stocker les messages reçus
@@ -82,27 +87,23 @@ public class teamSecondary extends Brain {
       state = (whoAmI == ROCKY) ? TURNRIGHTTASKINIT1 : TURNLEFTTASKINIT1;
     }
     isMoving = false;
+    isMovingBack = false;
     oldAngle = getHeading();
     receivedMessages = new ArrayList<>(); // Initialisation de la liste de messages
   }
 
   public void step() {
-    // ODOMETRY CODE
-    if (isMoving) {
-      myX += Parameters.teamASecondaryBotSpeed * Math.cos(getHeading());
-      myY += Parameters.teamASecondaryBotSpeed * Math.sin(getHeading());
-      isMoving = false;
-    }
+    // Update odometry first
+    updateOdometry();
+    
     // DEBUG MESSAGE
     if (whoAmI == ROCKY) {
       String teamName = (myTeam == TEAM_A) ? "Team A" : "Team B";
-      sendLogMessage("#ROCKY " + teamName + " State: " + state  );
+      sendLogMessage("#ROCKY " + teamName + " State: " + state + " Position: (" + (int)myX + "," + (int)myY + ")");
     } else {
       String teamName = (myTeam == TEAM_A) ? "Team A" : "Team B";
-      sendLogMessage("#MARIO " + teamName + " State: " + state );
+      sendLogMessage("#MARIO " + teamName + " State: " + state + " Position: (" + (int)myX + "," + (int)myY + ")");
     }
-
-  
     
     // RADAR DETECTION
     // Track if we found enemy in this radar scan
@@ -119,52 +120,51 @@ public class teamSecondary extends Brain {
         stepTurn(Parameters.Direction.RIGHT);
       }
 
-
       // Detect enemies and send fire message
       if (o.getObjectType() == IRadarResult.Types.OpponentMainBot
         || o.getObjectType() == IRadarResult.Types.OpponentSecondaryBot) {
-      double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-      double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-      sendMessage(FIRE, enemyX, enemyY);
-      enemyDetected = true;
+        double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
+        double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
+        sendMessage(FIRE, enemyX, enemyY);
+        enemyDetected = true;
       }
       
       // Check for wrecks - if an enemy became a wreck, it's dead
       if (o.getObjectType() == IRadarResult.Types.Wreck && state == FOLLOWTASK) {
-      sendLogMessage("Enemy destroyed! Looking for new targets");
-      state = MOVETASK; // Reset to movement state to find new enemies
+        sendLogMessage("Enemy destroyed! Looking for new targets");
+        state = MOVETASK; // Reset to movement state to find new enemies
       }
       
       // Follow MainBot if detected
       if (o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
-      state = FOLLOWTASK;
+        state = FOLLOWTASK;
       }
       
       // Handle orientation and movement towards enemy
       if (state == FOLLOWTASK && o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
-      // Track enemy as it moves
-      double enemyDirection = o.getObjectDirection();
-      double headingDiff = normalizeAngle(enemyDirection - getHeading());
-      
-      // Always adjust orientation to keep tracking the enemy
-      // Even for small deviations in enemy movement
-      if (Math.abs(headingDiff) > 0.2) {
-        // Turn towards enemy - continuous tracking
-        if (headingDiff > 0) {
-          stepTurn(Parameters.Direction.RIGHT);
-        } else {
-          stepTurn(Parameters.Direction.LEFT);
+        // Track enemy as it moves
+        double enemyDirection = o.getObjectDirection();
+        double headingDiff = normalizeAngle(enemyDirection - getHeading());
+        
+        // Always adjust orientation to keep tracking the enemy
+        // Even for small deviations in enemy movement
+        if (Math.abs(headingDiff) > 0.2) {
+          // Turn towards enemy - continuous tracking
+          if (headingDiff > 0) {
+            stepTurn(Parameters.Direction.RIGHT);
+          } else {
+            stepTurn(Parameters.Direction.LEFT);
+          }
+          sendLogMessage("Tracking enemy movement");
+          return; // Exit to complete tracking adjustment first
         }
-        sendLogMessage("Tracking enemy movement");
-        return; // Exit to complete tracking adjustment first
-      }
-      
-      // Then decide whether to approach or back away
-      if (o.getObjectDistance() <= 500) {
-        moveBack();
-      } else {
-        myMove();
-      }
+        
+        // Then decide whether to approach or back away
+        if (o.getObjectDistance() <= 500) {
+          myMoveBack();
+        } else {
+          myMove();
+        }
       }
     }
     
@@ -246,6 +246,37 @@ public class teamSecondary extends Brain {
     }
   }
 
+  // --- MÉTHODES D'ODOMÉTRIE ET DE DÉTECTION DE COLLISION ---
+  private void updateOdometry() {
+    boolean collision = detectCollision();
+    if (isMoving) {
+      updatePosition(Parameters.teamASecondaryBotSpeed, collision);
+      isMoving = false;
+    } else if (isMovingBack) {
+      updatePosition(-Parameters.teamASecondaryBotSpeed, collision);
+      isMovingBack = false;
+    }
+  }
+  
+  private void updatePosition(double speed, boolean collision) {
+    if (!collision) {
+      myX += speed * Math.cos(getHeading());
+      myY += speed * Math.sin(getHeading());
+    } else if (speed < 0) {
+      sendLogMessage("Collision detected during backward movement!");
+    }
+  }
+  
+  private boolean detectCollision() {    
+    for (IRadarResult o : detectRadar()) {
+      if (isMoving && o.getObjectDistance() < COLLISION_THRESHOLD &&
+          isRoughlySameDirection(o.getObjectDirection(), getHeading())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ---UTILITIES---//
   // Normaliser un angle pour qu'il soit entre -PI et PI
   private double normalizeAngle(double angle) {
@@ -260,10 +291,19 @@ public class teamSecondary extends Brain {
     double diff = normalizeAngle(dir1 - dir2);
     return diff < ANGLEPRECISION;
   }
+  
+  private boolean isRoughlySameDirection(double dir1, double dir2) {
+    return Math.abs(normalizeAngle(dir1) - normalizeAngle(dir2)) < Math.PI / 6.0; // Using pi/6 (30 degrees) for rough comparison
+  }
 
   private void myMove() {
     isMoving = true;
     move();
+  }
+  
+  private void myMoveBack() {
+    isMovingBack = true;
+    moveBack();
   }
 
   /**
@@ -272,11 +312,9 @@ public class teamSecondary extends Brain {
    * @return TEAM_A ou TEAM_B
    */
   private int determineTeam() {
-
     if (isSameDirection(getHeading(), Parameters.EAST)) {
       return TEAM_A;
     }
-
     return TEAM_B;
   }
 
@@ -292,7 +330,7 @@ public class teamSecondary extends Brain {
 
     if (data != null) {
       for (Object datum : data) {
-      message.append(":").append(datum);
+        message.append(":").append(datum);
       }
     }
 
@@ -310,7 +348,8 @@ public class teamSecondary extends Brain {
     int messageType = Integer.parseInt(parts[2]);
     switch (messageType) {
       case FIRE:
-      // Do nothing 
+        // Do nothing 
+        break;
 
       case FALLBACK:
         // Traite un message de repli
