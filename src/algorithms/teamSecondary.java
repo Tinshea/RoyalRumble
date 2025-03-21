@@ -47,6 +47,9 @@ public class teamSecondary extends Brain {
   private static final int TEAM_A = 0;
   private static final int TEAM_B = 1;
 
+  private static final double SENSOR_NOISE = 2.0;
+  private static final double PROCESS_NOISE = 3.0;
+
   // ---VARIABLES---//
   private int state;
   private double oldAngle;
@@ -56,6 +59,11 @@ public class teamSecondary extends Brain {
   private int whoAmI;
   private int myTeam; // Pour stocker l'équipe du robot
   private ArrayList<String> receivedMessages; // Pour stocker les messages reçus
+
+  private double estimatedX, estimatedY;
+  private double uncertaintyX = 1.0, uncertaintyY = 1.0;
+  private double velocityX = 0.0, velocityY = 0.0;
+  private double lastUpdateTime = 0;
 
   // ---CONSTRUCTORS---//
   public teamSecondary() {
@@ -90,6 +98,12 @@ public class teamSecondary extends Brain {
     isMovingBack = false;
     oldAngle = getHeading();
     receivedMessages = new ArrayList<>(); // Initialisation de la liste de messages
+
+    estimatedX = myX;
+    estimatedY = myY;
+    velocityX = 0.0;
+    velocityY = 0.0;
+    lastUpdateTime = System.currentTimeMillis();
   }
 
   public void step() {
@@ -256,18 +270,82 @@ public class teamSecondary extends Brain {
       updatePosition(-Parameters.teamASecondaryBotSpeed, collision);
       isMovingBack = false;
     }
+    
+    refinePositionWithRadar();
   }
   
   private void updatePosition(double speed, boolean collision) {
     if (!collision) {
-      myX += speed * Math.cos(getHeading());
-      myY += speed * Math.sin(getHeading());
+      long currentTime = System.currentTimeMillis();
+      double deltaTime = (currentTime - lastUpdateTime) / 1000.0;
+      if (deltaTime <= 0) deltaTime = 0.01;
+      lastUpdateTime = currentTime;
+      
+      double newX = myX + speed * Math.cos(getHeading());
+      double newY = myY + speed * Math.sin(getHeading());
+      
+      double instantVelocityX = (newX - myX) / deltaTime;
+      double instantVelocityY = (newY - myY) / deltaTime;
+      
+      double alpha = 0.3;
+      velocityX = alpha * instantVelocityX + (1 - alpha) * velocityX;
+      velocityY = alpha * instantVelocityY + (1 - alpha) * velocityY;
+      
+      double predictedX = estimatedX + velocityX * deltaTime;
+      double predictedY = estimatedY + velocityY * deltaTime;
+      
+      double measurementWeight = 0.7;
+      estimatedX = kalmanFilter(predictedX, newX, uncertaintyX, measurementWeight);
+      estimatedY = kalmanFilter(predictedY, newY, uncertaintyY, measurementWeight);
+      
+      myX = estimatedX;
+      myY = estimatedY;
+      
+      if (speed != 0) {
+        sendLogMessage("Vitesse: vX=" + Math.round(velocityX) + ", vY=" + Math.round(velocityY));
+      }
     } else if (speed < 0) {
-      sendLogMessage("Collision detected during backward movement!");
+      sendLogMessage("Collision détectée - position non mise à jour");
+      velocityX = 0;
+      velocityY = 0;
     }
   }
   
-  private boolean detectCollision() {    
+  private double kalmanFilter(double predicted, double measured, double uncertainty, double measurementWeight) {
+    double kalmanGain = uncertainty / (uncertainty + SENSOR_NOISE);
+    kalmanGain = (1 - measurementWeight) * kalmanGain + measurementWeight;
+    double newEstimated = predicted + kalmanGain * (measured - predicted);
+    double newUncertainty = (1 - kalmanGain) * uncertainty + PROCESS_NOISE;
+    
+    if (predicted == estimatedX) {
+      uncertaintyX = newUncertainty;
+    } else {
+      uncertaintyY = newUncertainty;
+    }
+    
+    return newEstimated;
+  }
+  
+  private void refinePositionWithRadar() {
+    for (IRadarResult o : detectRadar()) {
+      if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 400) {
+        double wreckX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
+        double wreckY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
+        
+        double robotX = wreckX - o.getObjectDistance() * Math.cos(o.getObjectDirection());
+        double robotY = wreckY - o.getObjectDistance() * Math.sin(o.getObjectDirection());
+        
+        estimatedX = kalmanFilter(estimatedX, robotX, uncertaintyX * 1.5, 0.3);
+        estimatedY = kalmanFilter(estimatedY, robotY, uncertaintyY * 1.5, 0.3);
+        
+        myX = estimatedX;
+        myY = estimatedY;
+        break;
+      }
+    }
+  }
+
+  private boolean detectCollision() {
     for (IRadarResult o : detectRadar()) {
       if (isMoving && o.getObjectDistance() < COLLISION_THRESHOLD &&
           isRoughlySameDirection(o.getObjectDirection(), getHeading())) {
