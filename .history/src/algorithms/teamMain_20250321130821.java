@@ -199,7 +199,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   }
   
   private void initializeFormationPosition() {
-    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 100 : -100);
+    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 200 : -200);
     double centerY = Parameters.teamAMainBot2InitY;
     double[] formationPosition = calculateFormationPosition(centerX, centerY, whoAmI);
     formationX = formationPosition[0]; 
@@ -343,19 +343,20 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   
     for (IRadarResult o : detectRadar()) {
       // System.out.println("Detected obstacle: Type=" + o.getObjectType() + ", Distance=" + o.getObjectDistance() + ", WhoAmI=" + getWhoAmIString());
-      if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 200) {
+      if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 300) {
         obstacleDetected = true;
         double obstacleX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
         double obstacleY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
   
         // Calculer une position d'esquive en diagonale
-        targetX = myX + 500 ;
+        targetX = myX + 300 ;
         targetY = myY > obstacleY ? myY + 300 : myY - 300;
         break;
       }
     }
+    if(whoAmI == GAMMA){
       System.out.println(getWhoAmIString() + " j'envoie (" + dodgeX + "," + dodgeY +")");
-    
+    }
     if (obstacleDetected) {
       moveToCoordinates(targetX, targetY);
     } else {

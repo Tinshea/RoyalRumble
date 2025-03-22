@@ -199,7 +199,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   }
   
   private void initializeFormationPosition() {
-    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 100 : -100);
+    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 200 : -200);
     double centerY = Parameters.teamAMainBot2InitY;
     double[] formationPosition = calculateFormationPosition(centerX, centerY, whoAmI);
     formationX = formationPosition[0]; 
@@ -343,21 +343,20 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   
     for (IRadarResult o : detectRadar()) {
       // System.out.println("Detected obstacle: Type=" + o.getObjectType() + ", Distance=" + o.getObjectDistance() + ", WhoAmI=" + getWhoAmIString());
-      if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 200) {
+      if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 300) {
         obstacleDetected = true;
         double obstacleX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
         double obstacleY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
   
         // Calculer une position d'esquive en diagonale
-        targetX = myX + 500 ;
-        targetY = myY > obstacleY ? myY + 300 : myY - 300;
+        dodgeX = myX < obstacleX ? myX + 300 : myX - 300;
+        dodgeY = myY > obstacleY ? myY + 300 : myY - 300;
         break;
       }
     }
-      System.out.println(getWhoAmIString() + " j'envoie (" + dodgeX + "," + dodgeY +")");
-    
+  
     if (obstacleDetected) {
-      moveToCoordinates(targetX, targetY);
+      moveToCoordinates(dodgeX, dodgeY);
     } else {
       // Revenir à la formation
       state = TRIANGLE_FORMATION;
@@ -574,9 +573,9 @@ private void moveToCoordinates(double targetX, double targetY) {
   }
 
   double angleToTarget = normalizeHeading(Math.atan2(dy, dx));
-  // if (whoAmI = GAMMA){
-  //   System.out.println(getWhoAmIString() +" angle " +  angleToTarget);
-  // }
+  if (whoAmI == GAMMA){
+    System.out.println(getWhoAmIString() +" angle " +  angleToTarget);
+  }
   
   if (isObstacleOnPath(angleToTarget)) {
     // Stratégie d'évitement d'obstacles - Recherche d'un angle libre

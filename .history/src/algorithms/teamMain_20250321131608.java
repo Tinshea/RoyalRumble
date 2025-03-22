@@ -199,7 +199,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   }
   
   private void initializeFormationPosition() {
-    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 100 : -100);
+    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 200 : -200);
     double centerY = Parameters.teamAMainBot2InitY;
     double[] formationPosition = calculateFormationPosition(centerX, centerY, whoAmI);
     formationX = formationPosition[0]; 
