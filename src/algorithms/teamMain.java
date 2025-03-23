@@ -33,6 +33,7 @@ public class teamMain extends Brain {
   private static final int ROGER = 0x0C0C0C0C;
   private static final int OVER = 0xC00010FF;
   private static final int DODGE = 0xD0D6E;
+  private static final int TARGET_CONSENSUS = 0xC105E; // Nouveau type de message pour le consensus de cible
 
   // États de tâches
   private static final int SINK = 0xBADC0DE1;
@@ -144,6 +145,12 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   private long lastTargetUpdateTime = 0;
   private static final long TARGET_PERSISTENCE_TIME = 5000; // 5 secondes
 
+  // Variables pour le consensus de cible
+  private int teamConsensusTargetId = -1;
+  private Map<Integer, Integer> targetVotes = new HashMap<>(); // Comptage des votes pour chaque cible
+  private long lastTargetBroadcastTime = 0;
+  private static final long TARGET_BROADCAST_INTERVAL = 500; // Intervalle de diffusion des préférences de cible en ms
+
   // --- CONSTRUCTEUR ---
   public teamMain() {
     super();
@@ -210,6 +217,17 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     determineInitialPosition();
     myTeam = determineTeam();
     
+    if (whoAmI == GAMMA) {
+      myX = (myTeam == TEAM_A) ? Parameters.teamAMainBot1InitX : Parameters.teamBMainBot1InitX;
+      myY = (myTeam == TEAM_A) ? Parameters.teamAMainBot1InitY : Parameters.teamBMainBot1InitY;
+    } else if (whoAmI == BETA) {
+      myX = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitX : Parameters.teamBMainBot2InitX;
+      myY = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitY : Parameters.teamBMainBot2InitY;
+    } else if (whoAmI == ALPHA) {
+      myX = (myTeam == TEAM_A) ? Parameters.teamAMainBot3InitX : Parameters.teamBMainBot3InitX;
+      myY = (myTeam == TEAM_A) ? Parameters.teamAMainBot3InitY : Parameters.teamBMainBot3InitY;
+    }
+
     // Initialisation des variables
     state = TRIANGLE_FORMATION;
     isMoving = false;
@@ -240,8 +258,8 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   }
   
   private void initializeFormationPosition() {
-    double centerX = Parameters.teamAMainBot2InitX + (myTeam == TEAM_A ? 100 : -100);
-    double centerY = Parameters.teamAMainBot2InitY;
+    double centerX = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitX + 100 : Parameters.teamBMainBot2InitX - 100;
+    double centerY = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitY : Parameters.teamBMainBot2InitY;
     double[] formationPosition = calculateFormationPosition(centerX, centerY, whoAmI);
     formationX = formationPosition[0]; 
     formationY = formationPosition[1];
@@ -259,16 +277,8 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     }
     
     // Définir la position initiale selon l'identité du robot
-    if (whoAmI == GAMMA) {
-      myX = Parameters.teamAMainBot1InitX;
-      myY = Parameters.teamAMainBot1InitY;
-    } else if (whoAmI == BETA) {
-      myX = Parameters.teamAMainBot2InitX;
-      myY = Parameters.teamAMainBot2InitY;
-    } else if (whoAmI == ALPHA) {
-      myX = Parameters.teamAMainBot3InitX;
-      myY = Parameters.teamAMainBot3InitY;
-    }
+ 
+  
   }
   
   // --- BOUCLE PRINCIPALE ---
@@ -348,6 +358,12 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
                       sendLogMessage("Ligne de tir bloquée - repositionnement");
                   }
               }
+          }else{
+              // Si la cible est hors de portée, arrêter de tirer
+              if (isLineOfFireClear(myX + 1000 * Math.cos(getHeading()), 
+              myY + 1000 * Math.sin(getHeading()))) {
+fire(getHeading());
+}
           }
       } else if (fireRythm == 0 && friendlyFire) {
           // Tir aléatoire - vérifier qu'il n'y a pas d'obstacle directement devant
@@ -361,6 +377,8 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     cleanupStaleEnemies();
     // Appeler selectTarget pour mettre à jour la cible périodiquement
     selectTarget();
+    // Mise à jour de la cible consensuelle si nécessaire
+    updateTeamConsensusTarget();
   }
   
   // --- HANDLERS POUR LES DIFFÉRENTS ÉTATS ---
@@ -835,9 +853,12 @@ private boolean isObstacleOnPath(double angle) {
   }
   
   // --- MÉTHODES UTILITAIRES ---
+
   private double normalizeAngle(double angle) {
-    while (angle > Math.PI) angle -= 2 * Math.PI;
-    while (angle < -Math.PI) angle += 2 * Math.PI;
+    while (angle > Math.PI)
+      angle -= 2 * Math.PI;
+    while (angle < -Math.PI)
+      angle += 2 * Math.PI;
     return Math.abs(angle);
   }
   
@@ -868,6 +889,19 @@ private boolean isObstacleOnPath(double angle) {
   }
   
   private void firePosition(double x, double y) {
+    // Vérifier si nous avons une cible consensuelle valide
+    if (teamConsensusTargetId != -1 && enemyTracker.containsKey(teamConsensusTargetId)) {
+      EnemyInfo consensusTarget = enemyTracker.get(teamConsensusTargetId);
+      
+      // Si la cible consensuelle est différente de la cible actuelle
+      if (Math.hypot(consensusTarget.x - x, consensusTarget.y - y) > 50) {
+        // Priorité à la cible consensuelle
+        x = consensusTarget.x;
+        y = consensusTarget.y;
+        sendLogMessage("Tir sur cible consensuelle plutôt que cible individuelle");
+      }
+    }
+    
     // Vérifier si la ligne de tir est dégagée
     if (!isLineOfFireClear(x, y)) {
         sendLogMessage("Tir bloqué par obstacle - tentative de tir alternatif");
@@ -933,21 +967,37 @@ private boolean isObstacleOnPath(double angle) {
   }
   
   private int determineTeam() {
-    return isSameDirection(getHeading(), Parameters.EAST) ? TEAM_A : TEAM_B;
+    if (isSameDirection(getHeading(), Parameters.EAST)) {
+      return TEAM_A;
+    }
+    return TEAM_B;
   }
   
   // --- MÉTHODES DE FORMATION ---
   private double[] calculateFormationPosition(double centerX, double centerY, int robotId) {
     double[] position = new double[2];
-    if (robotId == BETA) {
-      position[0] = centerX;
-      position[1] = centerY;
-    } else if (robotId == GAMMA) {
-      position[0] = centerX - TRIANGLE_SIDE;
-      position[1] = centerY - (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
-    } else if (robotId == ALPHA) {
-      position[0] = centerX - TRIANGLE_SIDE;
-      position[1] = centerY + (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
+    if (myTeam == TEAM_A) {
+      if (robotId == BETA) {
+        position[0] = centerX;
+        position[1] = centerY;
+      } else if (robotId == GAMMA) {
+        position[0] = centerX - TRIANGLE_SIDE;
+        position[1] = centerY - (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
+      } else if (robotId == ALPHA) {
+        position[0] = centerX - TRIANGLE_SIDE;
+        position[1] = centerY + (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
+      }
+    } else { // TEAM_B
+      if (robotId == BETA) {
+        position[0] = centerX;
+        position[1] = centerY;
+      } else if (robotId == GAMMA) {
+        position[0] = centerX + TRIANGLE_SIDE;
+        position[1] = centerY - (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
+      } else if (robotId == ALPHA) {
+        position[0] = centerX + TRIANGLE_SIDE;
+        position[1] = centerY + (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
+      }
     }
     
     // Garder les positions à l'intérieur des limites de l'arène
@@ -983,6 +1033,9 @@ private boolean isObstacleOnPath(double angle) {
         break;
       case DODGE:
         processDodgeMessage(parts);
+        break;
+      case TARGET_CONSENSUS:
+        processTargetConsensusMessage(parts);
         break;
       default:
         sendLogMessage("Unknown message type: " + messageType);
@@ -1114,6 +1167,34 @@ private boolean isObstacleOnPath(double angle) {
     // formationY = pos[1];
     if (alive)
     state = DODGE;
+  }
+  
+  private void processTargetConsensusMessage(String[] parts) {
+    // Extraire l'ID de la cible proposée
+    int proposedTargetId = Integer.parseInt(parts[3]);
+    
+    // Si cette cible existe dans notre tracker
+    if (enemyTracker.containsKey(proposedTargetId)) {
+      // Mettre à jour le compteur de votes pour cette cible
+      targetVotes.put(proposedTargetId, targetVotes.getOrDefault(proposedTargetId, 0) + 1);
+    }
+    
+    // Si c'est une nouvelle cible que nous ne connaissons pas encore
+    else if (parts.length > 4) {
+      // Essayer d'extraire les coordonnées si elles sont disponibles dans le message
+      try {
+        double enemyX = Double.parseDouble(parts[4]);
+        double enemyY = Double.parseDouble(parts[5]);
+        
+        // Créer une entrée temporaire dans notre tracker
+        enemyTracker.put(proposedTargetId, new EnemyInfo(enemyX, enemyY, 1000, null));
+        
+        // Ajouter un vote pour cette cible
+        targetVotes.put(proposedTargetId, targetVotes.getOrDefault(proposedTargetId, 0) + 1);
+      } catch (Exception e) {
+        // Ignorer si les coordonnées ne sont pas valides
+      }
+    }
   }
   
   private void processIncomingMessages() {
@@ -1586,5 +1667,68 @@ private boolean fireAtNearbyEnemy() {
   }
   
   return false;
+}
+
+/**
+ * Partage périodiquement la cible préférée de ce robot avec le reste de l'équipe
+ */
+private void sharePreferedTarget() {
+  long currentTime = System.currentTimeMillis();
+  
+  // Vérifier si c'est le moment de diffuser notre cible
+  if (currentTime - lastTargetBroadcastTime > TARGET_BROADCAST_INTERVAL && targetEnemyId != -1) {
+    // Envoyer notre préférence de cible à l'équipe
+    sendMessage(TARGET_CONSENSUS, targetEnemyId);
+    lastTargetBroadcastTime = currentTime;
+    
+    // Debug
+    if (teamConsensusTargetId != -1) {
+      sendLogMessage("Ma cible: " + targetEnemyId + ", Consensus équipe: " + teamConsensusTargetId);
+    }
+  }
+}
+
+/**
+ * Met à jour la cible consensuelle de l'équipe en fonction des votes
+ */
+private void updateTeamConsensusTarget() {
+  // Si nous n'avons pas de votes, garder la cible actuelle
+  if (targetVotes.isEmpty()) {
+    return;
+  }
+  
+  // Trouver la cible avec le plus de votes
+  int maxVotes = 0;
+  int mostVotedTarget = -1;
+  
+  for (Map.Entry<Integer, Integer> entry : targetVotes.entrySet()) {
+    if (entry.getValue() > maxVotes) {
+      maxVotes = entry.getValue();
+      mostVotedTarget = entry.getKey();
+    }
+  }
+  
+  // Si nous avons une cible avec suffisamment de votes (au moins 2)
+  if (maxVotes >= 2) {
+    teamConsensusTargetId = mostVotedTarget;
+    
+    // Si notre cible actuelle n'est pas celle du consensus et que le consensus est valide
+    if (targetEnemyId != teamConsensusTargetId && enemyTracker.containsKey(teamConsensusTargetId)) {
+      // Adopter la cible consensuelle
+      targetEnemyId = teamConsensusTargetId;
+      
+      EnemyInfo target = enemyTracker.get(targetEnemyId);
+      targetX = target.x;
+      targetY = target.y;
+      
+      sendLogMessage("Adoption de la cible consensuelle: " + targetEnemyId);
+    }
+  }
+  
+  // Nettoyer les votes obsolètes (plus anciens que 3 secondes)
+  long currentTime = System.currentTimeMillis();
+  targetVotes.entrySet().removeIf(entry -> 
+      !enemyTracker.containsKey(entry.getKey()) || 
+      currentTime - enemyTracker.get(entry.getKey()).lastSeen > 3000);
 }
 }

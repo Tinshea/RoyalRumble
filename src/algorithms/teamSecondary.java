@@ -98,6 +98,7 @@ public class teamSecondary extends Brain {
     myTeam = determineTeam();
 
     // INIT
+    System.out.println(myTeam + " " + getHeading());
     if (myTeam == TEAM_A) {
       state = (whoAmI == ROCKY) ? TURNLEFTTASKINIT1 : TURNRIGHTTASKINIT1;
     } else {
