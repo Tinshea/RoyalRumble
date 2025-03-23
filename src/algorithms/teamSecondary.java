@@ -15,8 +15,8 @@ import java.util.ArrayList;
 
 public class teamSecondary extends Brain {
   // ---PARAMETERS---//
-  private static final double ANGLEPRECISION = 0.01;
-  private static final double COLLISION_THRESHOLD = 110;
+  private static final double ANGLEPRECISION = 0.03;
+  private static final double COLLISION_THRESHOLD = 300;
   private static final double ARENA_WIDTH = 3000;
   private static final double ARENA_HEIGHT = 2000;
   private static final double SAFETY_MARGIN = 100.0;
@@ -31,6 +31,7 @@ public class teamSecondary extends Brain {
   private static final int ROGER = 0x0C0C0C0C;
   private static final int COMBAT = 0xB52B52;
   private static final int OVER = 0xC00010FF;
+  private static final int FOCUSING = 0xF0C05; // New message type for focus notification
   
   // ---Tâches---//
   // ---Position initiale de l'équipe---//
@@ -59,6 +60,14 @@ public class teamSecondary extends Brain {
   private int whoAmI;
   private int myTeam; // Pour stocker l'équipe du robot
   private ArrayList<String> receivedMessages; // Pour stocker les messages reçus
+  
+  // Variables for focus coordination
+  private int currentlyFocusedTarget = -1; // ID of enemy I'm focusing on
+  private ArrayList<Integer> targetsBeingFocused; // Enemies focused by teammates
+  private long lastFocusMessageTime = 0;
+  private static final long FOCUS_MESSAGE_INTERVAL = 1000; // Interval between focus messages (1 second)
+  private static final long FOCUS_TIMEOUT = 3000; // Timeout for focus data (3 seconds)
+  private ArrayList<Long> focusTimestamps; // When each focus was last updated
 
   private double estimatedX, estimatedY;
   private double uncertaintyX = 1.0, uncertaintyY = 1.0;
@@ -99,6 +108,9 @@ public class teamSecondary extends Brain {
     oldAngle = getHeading();
     receivedMessages = new ArrayList<>(); // Initialisation de la liste de messages
 
+    targetsBeingFocused = new ArrayList<>();
+    focusTimestamps = new ArrayList<>();
+
     estimatedX = myX;
     estimatedY = myY;
     velocityX = 0.0;
@@ -121,9 +133,24 @@ public class teamSecondary extends Brain {
       sendLogMessage("#MARIO " + teamName + " State: " + state + " Position: (" + (int)myX + "," + (int)myY + ")");
     }
     
+    // COMMUNICATION - Process messages before radar detection
+    ArrayList<String> messages = fetchAllMessages();
+    receivedMessages.clear(); // Efface les anciens messages à chaque step
+    for (String m : messages) {
+      if (Integer.parseInt(m.split(":")[1]) == whoAmI || Integer.parseInt(m.split(":")[1]) == TEAM) {
+        receivedMessages.add(m); // Stocke les messages pertinents
+        process(m);
+      }
+    }
+    
+    // Clean up old focus data
+    cleanupFocusData();
+    
     // RADAR DETECTION
     // Track if we found enemy in this radar scan
     boolean enemyDetected = false;
+    boolean mainBotDetected = false;
+    int detectedMainBotId = -1;
 
     for (IRadarResult o : detectRadar()) {
       // Detect and dodge bullets - highest priority
@@ -143,28 +170,46 @@ public class teamSecondary extends Brain {
         double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
         sendMessage(FIRE, enemyX, enemyY, o.getObjectDistance());
         enemyDetected = true;
+        
+        // If we detect a main bot, store its approximate ID based on position
+        if (o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
+          mainBotDetected = true;
+          // Generate a simple ID based on position (this is a simplification)
+          detectedMainBotId = (int)(enemyX * 10 + enemyY);
+        }
       }
       
       // Check for wrecks - if an enemy became a wreck, it's dead
       if (o.getObjectType() == IRadarResult.Types.Wreck && state == FOLLOWTASK) {
-        sendLogMessage("Enemy destroyed! Looking for new targets");
         state = MOVETASK; // Reset to movement state to find new enemies
       }
       
-      // Follow MainBot if detected
-      if (o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
+      // Follow MainBot if detected and not already being focused by a teammate
+      if (o.getObjectType() == IRadarResult.Types.OpponentMainBot && 
+          !isTargetBeingFocused(detectedMainBotId) && 
+          (currentlyFocusedTarget == -1 || currentlyFocusedTarget == detectedMainBotId)) {
+        
         state = FOLLOWTASK;
+        currentlyFocusedTarget = detectedMainBotId;
+        
+        // Send focus message at regular intervals
+        long currentTime = System.currentTimeMillis();
+        if (currentTime - lastFocusMessageTime > FOCUS_MESSAGE_INTERVAL) {
+          sendMessage(FOCUSING, detectedMainBotId, enemyDetected);
+          lastFocusMessageTime = currentTime;
+        }
       }
       
       // Handle orientation and movement towards enemy
-      if (state == FOLLOWTASK && o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
+      if (state == FOLLOWTASK && o.getObjectType() == IRadarResult.Types.OpponentMainBot && 
+          (currentlyFocusedTarget == -1 || currentlyFocusedTarget == detectedMainBotId)) {
         // Track enemy as it moves
         double enemyDirection = o.getObjectDirection();
         double headingDiff = normalizeAngle(enemyDirection - getHeading());
         
         // Always adjust orientation to keep tracking the enemy
         // Even for small deviations in enemy movement
-        if (Math.abs(headingDiff) > 0.2) {
+        if (Math.abs(headingDiff) > ANGLEPRECISION) {
           // Turn towards enemy - continuous tracking
           if (headingDiff > 0) {
             stepTurn(Parameters.Direction.RIGHT);
@@ -183,20 +228,17 @@ public class teamSecondary extends Brain {
       }
     }
     
-    // If we're following an enemy but didn't detect it this scan, reset to search mode
+    // If we're following an enemy but didn't detect it this scan, reset focus and search mode
     if (state == FOLLOWTASK && !enemyDetected) {
-      sendLogMessage("Enemy lost! Searching for new target");
+      currentlyFocusedTarget = -1;
       state = MOVETASK;
     }
-
-    // COMMUNICATION
-    ArrayList<String> messages = fetchAllMessages();
-    receivedMessages.clear(); // Efface les anciens messages à chaque step
-    for (String m : messages) {
-      if (Integer.parseInt(m.split(":")[1]) == whoAmI || Integer.parseInt(m.split(":")[1]) == TEAM) {
-        receivedMessages.add(m); // Stocke les messages pertinents
-        process(m);
-      }
+    
+    // If we were focusing on a main bot but it's now being focused by another secondary bot
+    if (state == FOLLOWTASK && mainBotDetected && isTargetBeingFocused(currentlyFocusedTarget) && 
+        currentlyFocusedTarget != -1 && whoAmI != targetsBeingFocused.get(targetsBeingFocused.indexOf(currentlyFocusedTarget) - 1)) {
+      currentlyFocusedTarget = -1;
+      state = MOVETASK;
     }
 
     // --- AUTOMATE DE POSITIONNEMENT ---//
@@ -302,11 +344,8 @@ public class teamSecondary extends Brain {
       myX = estimatedX;
       myY = estimatedY;
       
-      if (speed != 0) {
-        sendLogMessage("Vitesse: vX=" + Math.round(velocityX) + ", vY=" + Math.round(velocityY));
-      }
+
     } else if (speed < 0) {
-      sendLogMessage("Collision détectée - position non mise à jour");
       velocityX = 0;
       velocityY = 0;
     }
@@ -424,7 +463,11 @@ public class teamSecondary extends Brain {
    */
   private void process(String message) {
     String[] parts = message.split(":");
+    if (parts.length < 3) return;
+    
+    int sender = Integer.parseInt(parts[0]);
     int messageType = Integer.parseInt(parts[2]);
+    
     switch (messageType) {
       case FIRE:
         // Do nothing 
@@ -444,10 +487,63 @@ public class teamSecondary extends Brain {
         state = MOVETASK;
         break;
 
+      case FOCUSING:
+        // Process focus notification from teammate
+        if (sender != whoAmI && parts.length >= 4) {
+          int targetId = Integer.parseInt(parts[3]);
+          updateFocusInformation(sender, targetId);
+        }
+        break;
+
       default:
         // Message de type inconnu
-        sendLogMessage("Unknown message type: " + messageType);
         break;
+    }
+  }
+
+  /**
+   * Clean up old focus data that hasn't been updated recently
+   */
+  private void cleanupFocusData() {
+    long currentTime = System.currentTimeMillis();
+    for (int i = 0; i < targetsBeingFocused.size(); i++) {
+      if (currentTime - focusTimestamps.get(i) > FOCUS_TIMEOUT) {
+        targetsBeingFocused.remove(i);
+        focusTimestamps.remove(i);
+        i--;
+      }
+    }
+  }
+  
+  /**
+   * Check if a target is already being focused by a teammate
+   * 
+   * @param targetId ID of the target to check
+   * @return true if already focused, false otherwise
+   */
+  private boolean isTargetBeingFocused(int targetId) {
+    // If I'm focusing this target, it's not considered as "already focused by a teammate"
+    if (targetId == currentlyFocusedTarget) {
+      return false;
+    }
+    
+    return targetsBeingFocused.contains(targetId);
+  }
+
+  /**
+   * Update focus information when receiving a focus message
+   */
+  private void updateFocusInformation(int sender, int targetId) {
+    // Check if this target is already in our list
+    int index = targetsBeingFocused.indexOf(targetId);
+    
+    if (index == -1) {
+      // New focus - add to the list
+      targetsBeingFocused.add(targetId);
+      focusTimestamps.add(System.currentTimeMillis());
+    } else {
+      // Update timestamp for existing focus
+      focusTimestamps.set(index, System.currentTimeMillis());
     }
   }
 }
