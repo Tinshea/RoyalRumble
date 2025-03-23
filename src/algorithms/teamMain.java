@@ -52,14 +52,14 @@ public class teamMain extends Brain {
 
   // Paramètres de formation et carte
   private static final double TRIANGLE_SIDE = 300;
-  private static final double COLLISION_THRESHOLD = 120;
+  private static final double COLLISION_THRESHOLD = 130;
   private static final double ARENA_WIDTH = 3000;
   private static final double ARENA_HEIGHT = 2000;
   private static final double SAFETY_MARGIN = 100.0;
 private static final double ENEMY_DETECTION_THRESHOLD = 135;
   
   // Paramètres de tir améliorés
-  private static final int FIRE_COOLDOWN = Parameters.bulletFiringLatency - 2; // Tire plus fréquemment
+  private static final int FIRE_COOLDOWN = 5; // Tire plus fréquemment
   private static final double MAX_FIRING_DISTANCE = 1000.0; // Distance max de tir efficace
   private static final long ENEMY_TRACK_TIMEOUT = 3000; // Temps en ms pour oublier un ennemi non détecté
 
@@ -67,10 +67,8 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   private static final double SENSOR_NOISE = 2.0; // Réduit de 5.0 à 2.0 pour moins filtrer les mesures
   private static final double PROCESS_NOISE = 3.0; // Augmenté de 2.0 à 3.0 pour permettre plus de dynamisme
 
-  private static final int GRID_SIZE = 15; // Taille de la grille pour la planification
-  private static final double GRID_RESOLUTION = 200; // Taille d'une cellule en unités
 
-  // --- VARIABLES ---
+  // --- VARIABLES ---r 
   // État et position
   private int state;
   private double oldAngle;
@@ -121,6 +119,10 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   // Add this at the class level
   private double lastTargetX = -1, lastTargetY = -1;
   private static final double TARGET_CHANGE_THRESHOLD = 50.0;
+
+  // Add these variables to your class
+  private int consecutiveCollisionSteps = 0;
+  private boolean tryingMoveBack = true; // Tracks which strategy we're using
 
   // --- CONSTRUCTEUR ---
   public teamMain() {
@@ -233,7 +235,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   // --- BOUCLE PRINCIPALE ---
   public void step() {
     // System.out.println(getWhoAmIString() + " state :" + state + " targetX: " + targetX + " targetY: " + targetY);
-    // // Print radar information for debugging
+    // Print radar information for debugging
     // for (IRadarResult o : detectRadar()) {
     //   System.out.println("Radar detected: Type=" + o.getObjectType() + 
     //              ", Distance=" + o.getObjectDistance() + 
@@ -251,26 +253,11 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     
     // Gestion de la détection et du tir
     handleRadarDetection();
-    if (freeze) return;
-    
-    // Logique de tir améliorée
-    if (fireRythm == 0 && targetEnemyId != -1 && friendlyFire) {
-      EnemyInfo target = enemyTracker.get(targetEnemyId);
-      if (target != null && target.distance < MAX_FIRING_DISTANCE) {
-        // Utiliser la prédiction de position pour augmenter la précision
-        double[] predictedPos = target.predictPosition(2);
-        firePosition(predictedPos[0], predictedPos[1]);
-        fireRythm++;
-        return;
-      }
-    }
-    
+
     // Gérer le cooldown du tir 
-    if (fireRythm > 0) {
-      fireRythm++;
-      if (fireRythm >= FIRE_COOLDOWN) fireRythm = 0;
-    }
-    
+
+    fireRythm++;
+    if (fireRythm >= FIRE_COOLDOWN) fireRythm = 0;
     // Gestion des états
     switch (state) {
       case TRIANGLE_FORMATION:
@@ -296,6 +283,20 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
         
     }
     
+        // Logique de tir améliorée
+        if (fireRythm == 0 && targetEnemyId != -1 && friendlyFire) {
+          EnemyInfo target = enemyTracker.get(targetEnemyId);
+
+          if (target != null && target.distance < MAX_FIRING_DISTANCE) {
+            // Utiliser la prédiction de position pour augmenter la précision
+            double[] predictedPos = target.predictPosition(2); 
+            
+            firePosition(predictedPos[0], predictedPos[1]);
+          }
+        }else if (fireRythm == 0 && friendlyFire) {
+          fire(getHeading());
+        }
+        
     // Nettoyer les ennemis qui n'ont pas été détectés pendant un certain temps
     cleanupStaleEnemies();
   }
@@ -303,22 +304,24 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   // --- HANDLERS POUR LES DIFFÉRENTS ÉTATS ---
   private void handleTriangleFormation() {
     double distToTarget = Math.hypot(myX - formationX, myY - formationY);
-    
-    // Only update target if it has changed significantly
-    if (Math.hypot(formationX - lastTargetX, formationY - lastTargetY) > TARGET_CHANGE_THRESHOLD) {
-      lastTargetX = formationX;
-      lastTargetY = formationY;
-      // System.out.println("Updated target to: (" + Math.round(formationX) + "," + Math.round(formationY) + ")");
-    }
-    
     // Rest of the method remains the same
-    if (distToTarget < 30) {
+    if (distToTarget < 30 || ( distToTarget < 100 && (checkEnnemie() || isWreckNearby()))) {
       state = FINAL_ORIENTATION;
     } else {
       if(!checkTeamCollision())
-        moveToCoordinates(lastTargetX, lastTargetY);
+        moveToCoordinates(formationX, formationY);
     }
   }
+
+      // Rest of the method remains the same
+      private boolean isWreckNearby() {
+        for (IRadarResult o : detectRadar()) {
+          if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 200) {
+            return true;
+          }
+        }
+        return false;
+      }
   
   private void handleFinalOrientation() {
     double targetDirection = (myTeam == TEAM_A) ? Parameters.EAST : Parameters.WEST;
@@ -342,22 +345,22 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     double dodgeY = myY;
   
     for (IRadarResult o : detectRadar()) {
-      // System.out.println("Detected obstacle: Type=" + o.getObjectType() + ", Distance=" + o.getObjectDistance() + ", WhoAmI=" + getWhoAmIString());
-      if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 200) {
+      if ((o.getObjectType() == IRadarResult.Types.Wreck || isEnemyBot(o.getObjectType())) && o.getObjectDistance() < 300) {
         obstacleDetected = true;
         double obstacleX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
         double obstacleY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
   
         // Calculer une position d'esquive en diagonale
-        targetX = myX + 500 ;
-        targetY = myY > obstacleY ? myY + 300 : myY - 300;
+        if (Math.hypot(obstacleX - targetX, obstacleY - targetY) < COLLISION_THRESHOLD * 2) {
+          // Si l'obstacle est sur la cible, déplacer la cible
+          targetX = targetX + 500;
+          targetY = targetX > obstacleY ? targetX + 300 : targetX - 300;
+        } 
         break;
       }
-    }
-      System.out.println(getWhoAmIString() + " j'envoie (" + dodgeX + "," + dodgeY +")");
-    
+    }    
     if (obstacleDetected) {
-      moveToCoordinates(targetX, targetY);
+     moveToCoordinates(targetX, targetY);
     } else {
       // Revenir à la formation
       state = TRIANGLE_FORMATION;
@@ -429,7 +432,6 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
   
   // --- MÉTHODES DE DÉTECTION ET DE RÉACTION ---
   private void handleRadarDetection() {
-    freeze = false;
     friendlyFire = true;    
     // Actualiser le temps de scan
     lastScanTime = System.currentTimeMillis();
@@ -462,21 +464,15 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
           // Stocker les coordonnées pour les autres robots
           lastEnemyX = enemyX;
           lastEnemyY = enemyY;
-          
-          // Envoyer un message FIRE à tous les robots de l'équipe
+
           sendMessage(FIRE, enemyX, enemyY, o.getObjectDistance());
         }
       }
       
-      // Vérifier les obstacles latéraux
-      if (o.getObjectDistance() <= 100 && 
-          !isRoughlySameDirection(o.getObjectDirection(), getHeading()) && 
-          o.getObjectType() != IRadarResult.Types.BULLET) {
-        freeze = true;
-      }
-      
       // Vérifier le risque de tir ami
-      if (isTeamOrWreck(o.getObjectType()) && fireOrder && onTheWay(o.getObjectDirection())) {
+      
+      if ((o.getObjectType() == IRadarResult.Types.TeamMainBot || 
+      o.getObjectType() == IRadarResult.Types.TeamSecondaryBot) && onTheWay(o.getObjectDirection())) {
         friendlyFire = false;
       }
       
@@ -504,8 +500,17 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     long currentTime = System.currentTimeMillis();
     enemyTracker.entrySet().removeIf(entry -> 
         currentTime - entry.getValue().lastSeen > ENEMY_TRACK_TIMEOUT);
-    
+
     // Si la cible actuelle n'est plus dans le tracker, réinitialiser
+    // if (whoAmI == GAMMA) {
+    //   for (Map.Entry<Integer, EnemyInfo> entry : enemyTracker.entrySet()) {
+    //     EnemyInfo enemy = entry.getValue();
+    //     System.out.println("Enemy ID: " + entry.getKey() + 
+    //                        ", Position: (" + enemy.x + ", " + enemy.y + 
+    //                        "), Last Seen: " + enemy.lastSeen + 
+    //                        ", Distance: " + enemy.distance);
+    //   }
+    // }
     if (targetEnemyId != -1 && !enemyTracker.containsKey(targetEnemyId)) {
       targetEnemyId = -1;
       fireOrder = false;
@@ -517,11 +522,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
            type == IRadarResult.Types.OpponentSecondaryBot;
   }
   
-  private boolean isTeamOrWreck(IRadarResult.Types type) {
-    return type == IRadarResult.Types.TeamMainBot || 
-           type == IRadarResult.Types.TeamSecondaryBot || 
-           type == IRadarResult.Types.Wreck;
-  }
+
   
   private void processEnemyDetection(IRadarResult o) {
     double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
@@ -544,19 +545,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     }
     return false;
   }
-  
-  private void processFireOrders() {
-    if (fireRythm == 0) {
-      firePosition(targetX, targetY);
-      fireRythm++;
-      return;
-    }
-    fireRythm++;
-    if (fireRythm == Parameters.bulletFiringLatency) fireRythm = 0;
 
-    return;
-  }
-  
   // --- MÉTHODES DE DÉPLACEMENT ---
  /**
  * Déplace le robot vers (targetX, targetY) en évitant les obstacles.
@@ -564,7 +553,28 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
  * Sinon, elle cherche une direction alternative en tournant par petits incréments.
  */
 private void moveToCoordinates(double targetX, double targetY) {
-  // System.out.println("Target coordinates: X=" + targetX + ", Y=" + targetY + ", WhoAmI: " + getWhoAmIString());
+  double collision = COLLISION_THRESHOLD*1.2;
+  if (detectCollision(collision)) {
+    double collisionAngle = getHeading();
+    for (IRadarResult o : detectRadar()) {
+      if (o.getObjectDistance() < collision && 
+          o.getObjectType() != IRadarResult.Types.BULLET) {
+        collisionAngle = o.getObjectDirection();
+        break;
+      }
+    }
+
+    double angleDiff = normalizeAngleDifference(collisionAngle - getHeading());
+    System.out.println(getWhoAmIString() + " Collision detected, angle: " + collisionAngle + ", heading: " + getHeading());
+    if (Math.abs(angleDiff) < Math.PI / 2) {
+      System.out.println(getWhoAmIString() + " Collision detected, back. Angle: " + angleDiff);
+      myMoveBack();
+    } else {
+      System.out.println(getWhoAmIString() + " Collision detected, front. Angle: " + angleDiff);
+      myMove();
+    }
+    return;
+  }
   double dx = targetX - myX;
   double dy = targetY - myY;
   double distance = Math.hypot(dx, dy);
@@ -593,14 +603,12 @@ private void moveToCoordinates(double targetX, double targetY) {
         // Chemin trouvé, avancer dans cette direction
         pathFound = true;
         turnAndMove(testAngle);
-        sendLogMessage("Obstacle avoided: moving at angle " + testAngle);
       }
     }
     
     if (!pathFound) {
       // Si aucun chemin n'est trouvé, reculer temporairement
       myMoveBack();
-      sendLogMessage("All paths blocked, backing up");
     }
   } else {
     // Pas d'obstacle, utiliser turnAndMove directement
@@ -808,12 +816,13 @@ private boolean isObstacleOnPath(double angle) {
     double newTargetX = Double.parseDouble(parts[3]);
     double newTargetY = Double.parseDouble(parts[4]);
     double newDistance = Math.hypot(newTargetX - myX, newTargetY - myY);
-    
+    targetX = newTargetX;
+    targetY = newTargetY;
     // Mettre à jour uniquement si la nouvelle cible est plus proche
-    if (newDistance < Math.hypot(targetX - myX, targetY - myY)) {
-      targetX = newTargetX;
-      targetY = newTargetY;
-    }
+    // if (newDistance < Math.hypot(targetX - myX, targetY - myY)) {
+    //   targetX = newTargetX;
+    //   targetY = newTargetY;
+    // }
     
     // Si le message contient une distance
     double distance = Double.MAX_VALUE;
@@ -889,7 +898,7 @@ private boolean isObstacleOnPath(double angle) {
     for (IRadarResult o : detectRadar()) {
       if ((o.getObjectType() == IRadarResult.Types.TeamMainBot ||
           o.getObjectType() == IRadarResult.Types.TeamSecondaryBot) &&
-          o.getObjectDistance() <= 200 && onTheWay(Math.PI)) {
+          o.getObjectDistance() <= 150 && onTheWay(Math.PI)) {
         return true;
       }
     }
@@ -898,7 +907,7 @@ private boolean isObstacleOnPath(double angle) {
   
   // --- MÉTHODES D'ODOMÉTRIE ET DE DÉTECTION DE COLLISION ---
   private void updateOdometry() {
-    boolean collision = detectCollision();
+    boolean collision = detectCollision(COLLISION_THRESHOLD);
     if (isMoving) {
       updatePosition(Parameters.teamAMainBotSpeed, collision);
       isMoving = false;
@@ -1038,18 +1047,6 @@ private boolean isObstacleOnPath(double angle) {
       if (isEnemyBot(o.getObjectType())) {
         double distance = o.getObjectDistance();
         if (distance < ENEMY_DETECTION_THRESHOLD) {
-          lastEnemyX = myX + distance * Math.cos(o.getObjectDirection());
-          lastEnemyY = myY + distance * Math.sin(o.getObjectDirection());
-          
-          // Ajouter ou mettre à jour dans le tracker d'ennemis
-          int enemyId = (int)(lastEnemyX * 1000 + lastEnemyY);
-          if (!enemyTracker.containsKey(enemyId)) {
-            enemyTracker.put(enemyId, new EnemyInfo(lastEnemyX, lastEnemyY, distance, o.getObjectType()));
-          } else {
-            enemyTracker.get(enemyId).update(lastEnemyX, lastEnemyY, distance);
-          }
-          
-          sendMessage(FIRE, lastEnemyX, lastEnemyY, distance);
           return true;
         }
       }
@@ -1057,49 +1054,14 @@ private boolean isObstacleOnPath(double angle) {
     return false;
   }
   
-  private boolean detectCollision() {    
+  private boolean detectCollision(double distance) {    
     for (IRadarResult o : detectRadar()) {
-      if (o.getObjectDistance() < COLLISION_THRESHOLD) {
+      if (o.getObjectDistance() < distance && 
+          o.getObjectType() != IRadarResult.Types.BULLET) {
         return true;
       }
     }
     return false;
   }
 
-  // Méthode de création de grille d'occupation
-  private boolean[][] createOccupancyGrid() {
-    boolean[][] grid = new boolean[GRID_SIZE][GRID_SIZE];
-    
-    // Calculer les limites de la grille centrée sur le robot
-    double gridStartX = myX - (GRID_SIZE/2) * GRID_RESOLUTION;
-    double gridStartY = myY - (GRID_SIZE/2) * GRID_RESOLUTION;
-    
-    // Marquer les cellules occupées par des obstacles
-    for (IRadarResult o : detectRadar()) {
-      if (o.getObjectType() == IRadarResult.Types.BULLET) continue;
-      
-      double obstacleX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-      double obstacleY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-      
-      // Convertir en indices de grille
-      int gridX = (int)((obstacleX - gridStartX) / GRID_RESOLUTION);
-      int gridY = (int)((obstacleY - gridStartY) / GRID_RESOLUTION);
-      
-      // Vérifier que les indices sont dans les limites
-      if (gridX >= 0 && gridX < GRID_SIZE && gridY >= 0 && gridY < GRID_SIZE) {
-        // Marquer les cellules voisines aussi (pour tenir compte de la taille des obstacles)
-        for (int dx = -1; dx <= 1; dx++) {
-          for (int dy = -1; dy <= 1; dy++) {
-            int x = gridX + dx;
-            int y = gridY + dy;
-            if (x >= 0 && x < GRID_SIZE && y >= 0 && y < GRID_SIZE) {
-              grid[x][y] = true; // Cellule occupée
-            }
-          }
-        }
-      }
-    }
-    
-    return grid;
-  }
 }

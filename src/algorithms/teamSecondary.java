@@ -108,7 +108,9 @@ public class teamSecondary extends Brain {
 
   public void step() {
     // Update odometry first
+    if(getHealth() > 0) {
     updateOdometry();
+    }
     
     // DEBUG MESSAGE
     if (whoAmI == ROCKY) {
@@ -139,7 +141,7 @@ public class teamSecondary extends Brain {
         || o.getObjectType() == IRadarResult.Types.OpponentSecondaryBot) {
         double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
         double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-        sendMessage(FIRE, enemyX, enemyY);
+        sendMessage(FIRE, enemyX, enemyY, o.getObjectDistance());
         enemyDetected = true;
       }
       
@@ -169,7 +171,6 @@ public class teamSecondary extends Brain {
           } else {
             stepTurn(Parameters.Direction.LEFT);
           }
-          sendLogMessage("Tracking enemy movement");
           return; // Exit to complete tracking adjustment first
         }
         
