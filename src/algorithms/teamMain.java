@@ -523,27 +523,26 @@ fire(getHeading());
         target = enemyTracker.get(targetEnemyId);
     }
     
-    // NOUVEAU CODE: Logique d'interception
-    double[] interceptPoint = calculateInterceptionPoint(target);
-    double[] flankPoint = calculateFlankingPosition(interceptPoint[0], interceptPoint[1]);
+    // NOUVEAU CODE: Logique d'encerclement
+    double[] flankPoint = calculateFlankingPosition(target.x, target.y);
     double interceptX = flankPoint[0];
     double interceptY = flankPoint[1];
     
-    // Déplacement vers le point d'interception
+    // Déplacement vers le point d'encerclement
     double distance = Math.hypot(interceptX - myX, interceptY - myY);
     
     if (distance < 30) {
         // Si on est suffisamment proche, on s'arrête et on tire
         fireRythm = 0; // Pour permettre de tirer immédiatement
     } else {
-        // Si on est loin, on se déplace vers le point d'interception
+        // Si on est loin, on se déplace vers le point d'encerclement
         moveToCoordinatesAggressive(interceptX, interceptY);
     }
     
     // Envoyer des informations de débogage
-    sendLogMessage("Hunting: target=" + targetEnemyId + 
+    sendLogMessage("Encircling: target=" + targetEnemyId + 
                   ", distance=" + (int)distance + 
-                  ", intercepting at (" + (int)interceptX + "," + (int)interceptY + ")");
+                  ", flanking at (" + (int)interceptX + "," + (int)interceptY + ")");
 }
   
   // --- MÉTHODES DE DÉTECTION ET DE RÉACTION ---
@@ -1115,10 +1114,6 @@ private boolean isObstacleOnPath(double angle) {
   }
   
   private void processRogerMessage(String[] parts) {
-    System.out.println("Received ROGER message: " + parts);
-    for (int i = 0; i < parts.length; i++) {
-      System.out.println("Part " + i + ": " + parts[i]);
-    }
     int whoAreYou = Integer.parseInt(parts[0]);
     boolean statusUpdate = parts.length > 3 ? Boolean.parseBoolean(parts[3]) : true;
     
