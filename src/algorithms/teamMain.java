@@ -339,9 +339,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
     
         // Logique de tir améliorée
         // Dans la méthode step(), remplacer le bloc de tir par:
-        if (fireAtNearbyEnemy()) {
-          // Si un tir a été effectué sur un ennemi proche, ne pas exécuter la logique de tir standard
-        } else if (fireRythm == 0 && targetEnemyId != -1 && friendlyFire) {
+       if (fireRythm == 0 && targetEnemyId != -1 && friendlyFire) {
           EnemyInfo target = enemyTracker.get(targetEnemyId);
       
           if (target != null && target.distance < MAX_FIRING_DISTANCE) {
@@ -351,13 +349,7 @@ private static final double ENEMY_DETECTION_THRESHOLD = 135;
               // Vérifier s'il y a des obstacles avant de tirer
               if (isLineOfFireClear(predictedPos[0], predictedPos[1])) {
                   firePosition(predictedPos[0], predictedPos[1]);
-              } else {
-                  // Si ligne de tir bloquée et nous sommes en mode chasse,
-                  // chercher une meilleure position de tir
-                  if (state == HUNT_MODE) {
-                      sendLogMessage("Ligne de tir bloquée - repositionnement");
-                  }
-              }
+              } 
           }else{
               // Si la cible est hors de portée, arrêter de tirer
               if (isLineOfFireClear(myX + 1000 * Math.cos(getHeading()), 
@@ -924,7 +916,7 @@ private boolean isObstacleOnPath(double angle) {
                 fire(testAngle);
                 fireAttempted = true;
                 sendLogMessage("Tir alternatif à gauche: " + offsetAngle + " radians");
-                continue;
+                return;
             }
             
             // Essayer à droite
@@ -936,6 +928,7 @@ private boolean isObstacleOnPath(double angle) {
                 fire(testAngle);
                 fireAttempted = true;
                 sendLogMessage("Tir alternatif à droite: " + offsetAngle + " radians");
+                return;
             }
         }
         
