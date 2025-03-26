@@ -1,974 +1,938 @@
 /* ******************************************************
- * Simovies - Eurobot 5 Robomovies Simulator.
+ * Simovies - Eurobot 2015 Robomovies Simulator.
  * Copyright (C) 2014 <Binh-Minh.Bui-Xuan@ens-lyon.org>.
  * GPL version>=3 <http://www.gnu.org/licenses/>.
- * $Id: algorithms/Stage1.java 2014-10-18 buixuan.
+ * $Id: algorithms/teamMain.java 2025-03-25 .
  * ******************************************************/
 package algorithms;
 
 import robotsimulator.Brain;
 import characteristics.Parameters;
+import characteristics.IRadarResult.Types;
 import characteristics.IFrontSensorResult;
 import characteristics.IRadarResult;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.Map;
+import java.util.Comparator;
+import java.util.Random;
 
 public class teamMain extends Brain {
 
-  // --- CONSTANTES ---
-  // Précision
-  private static final double ANGLE_PRECISION = 0.03; 
-  private static final double FIRE_ANGLE_PRECISION = Math.PI / 6.0;
+  /************************* IMPORTANT ******************************/
+  /** Modifier cette variable en fonction du côté qui nous est attribué **/
+  // - à gauche => true
+  // - à droite => false
+  /*********************************************************************/
 
-  // Identifiants de robot
+  // ---PARAMETERS---//
+  private static final double ANGLEPRECISION = 0.001;
+  private static final double ANGLEPRECISIONBIS = 0.01;
+  private static final double ANGLE_PRECISION = 0.03;
+  private static final double DISTANCEPRECISION = 10.;
+  private static final double SAMELINEPRECISION = 125.;
+  private static final double TRIANGLE_SIDE = 250;
+
+  // Adding threat threshold and priority constants
+  private static final double HIGH_THREAT_DISTANCE = 300.0;
+  private static final double MEDIUM_THREAT_DISTANCE = 600.0;
+  private static final int HIGH_PRIORITY = 3;
+  private static final int MEDIUM_PRIORITY = 2;
+  private static final int LOW_PRIORITY = 1;
+
+  private static final double MAIN = 0xAAAAFFFF;
+  private static final double SECONDARY = 0xFFFFAAAA;
+
+  private static final int ROCKY = 0x1EBDDB;
+  private static final int MARIO = 0x5ECD;
   private static final int ALPHA = 0x1EADDA;
   private static final int BETA = 0x5EC0;
   private static final int GAMMA = 0x333;
   private static final int TEAM = 0xBADDAD;
 
-  // Types de messages
   private static final int FIRE = 0xB52;
-  private static final int ROGER = 0x0C0C0C0C;
+  private static final int POSITION = 0x7E57;
   private static final int OVER = 0xC00010FF;
-  private static final int DODGE = 0xD0D6E;
-  private static final int TARGET_CONSENSUS = 0xC105E; // Nouveau type de message pour le consensus de cible
 
-  // États de tâches
+  // ---TASK CONSTANTS---//
+  private static final int MOVETASK = 1;
+  private static final int STANDINGFIRINGTASK = 2;
+  private static final int BACKWARDFIRINGTASK = 3;
+  private static final int MOVEBACKTASK = 5;
+  private static final int TURNLEFTTASK = 6;
+  private static final int TURNRIGHTTASK = 7;
+  private static final int TRIANGLE_FORMATION = 8;
+  private static final int HUNTINGTASK = 9;
+  private static final int TURNNORTHTASK = 10;
+  private static final int TURNSOUTHTASK = 11;
+  private static final int TURNEASTTASK = 12;
+  private static final int TURNWESTTASK = 13;
+  private static final int FINAL_ORIENTATION = 14;
+
+  // ---PARAMETERS---//
+  private static final int FIRE_COOLDOWN = 3;
   private static final int SINK = 0xBADC0DE1;
-  private static final int MOVETASK = 2;
-  private static final int TURNLEFTTASK = 3;
-  private static final int TRIANGLE_FORMATION = 4;
-  private static final int FINAL_ORIENTATION = 7;
-  private static final int HUNT_MODE = 8; // Nouvel état pour la chasse aux ennemis
-  
-  // Sous-états pour TURNLEFTTASK
-  private static final int TURNLEFT_BACKWARD = 0;
-  private static final int TURNLEFT_ROTATE = 1;
-  private static final int TURNLEFT_COMPLETE = 2;
 
-  // Équipes
-  private static final int TEAM_A = 0;
-  private static final int TEAM_B = 1;
+  // ---ROBOT STATE---//
+  private int currentState; // Current robot state/task
+  private int firingSequenceStep; // Step counter for firing sequence
+  private double positionX, positionY; // Current position
+  private boolean isMovingForward; // Flag for forward movement
+  private boolean isMovingBackward; // Flag for backward movement
+  private int robotId; // Robot identifier
+  private int cooldownCounter; // Weapon cooldown counter
 
-  // Paramètres de formation et carte
-  private static final double TRIANGLE_SIDE = 300;
-  private static final double COLLISION_THRESHOLD = 130;
-  private static final double ARENA_WIDTH = 3000;
-  private static final double ARENA_HEIGHT = 2000;
-  private static final double SAFETY_MARGIN = 100.0;
-private static final double ENEMY_DETECTION_THRESHOLD = 135;
-  
-  // Paramètres de tir améliorés
-  private static final int FIRE_COOLDOWN = 3; // Réduit de 5 à 3 pour tirer plus rapidement
-  private static final double MAX_FIRING_DISTANCE = 1200.0; // Distance max de tir augmentée
-  private static final double OPTIMAL_FIRING_DISTANCE = 700.0; // Distance optimale pour le tir
-  private static final double IMMEDIATE_FIRING_THRESHOLD = 400.0; // Tir immédiat si ennemi très proche
-  private static final long ENEMY_TRACK_TIMEOUT = 3000; // Temps en ms pour oublier un ennemi non détecté
+  // ---TARGETING---//
+  private double targetX, targetY; // Current enemy target coordinates
+  private boolean firingEnabled; // Whether robot should fire
+  private Random randomGenerator; // Random number generator
+  private HashMap<Integer, ArrayList<Double>> teammates; // Teammate positions and headings
+  private ArrayList<ArrayList<Double>> enemyTargets; // Detected enemy positions
 
-  // Paramètres du filtre de Kalman pour l'odométrie
-  private static final double SENSOR_NOISE = 2.0; // Réduit de 5.0 à 2.0 pour moins filtrer les mesures
-  private static final double PROCESS_NOISE = 3.0; // Augmenté de 2.0 à 3.0 pour permettre plus de dynamisme
+  // ---TIMING---//
+  private int currentStep; // Current simulation step
+  private int backMoveStartStep; // When backward movement started
 
-  // Ajouter ces constantes et variables à votre classe
-  private static final long TARGET_MAX_FOCUS_TIME = 8000; // 8 secondes max sur la même cible
-  private long currentTargetStartTime = 0;
-
-  // --- VARIABLES ---r 
-  // État et position
-  private int state;
-  private double oldAngle;
-  private double myX, myY;
-  private int whoAmI;
-  private int myTeam;
-  
-  // Contrôle de mouvement
-  private boolean isMoving;
-  private boolean isMovingBack;
-  private int turnLeftSubState = TURNLEFT_BACKWARD; // Sous-état pour la tâche TURNLEFTTASK
-  private int backwardStepCount = 0; // Compteur pour les étapes de recul
-  private double targetRotation; // Angle cible pour la rotation
-  
-  // Gestion du tir
-  private int fireRythm;
-  private int countDown;
-  private double targetX, targetY;
-  private boolean fireOrder;
-  private boolean freeze;
-  private boolean friendlyFire;
-  private boolean alive;
-  
-  // Formation
+  // ---MOVEMENT---//
+  private double targetRotation; // Desired heading after rotation
+  private String huntingStrategy; // Strategy for approaching targets
+  private boolean needNewAimAngle; // Whether to recalculate firing angle
+  private int counter;
+  private boolean myTeam;
+  private double lastTargetX, lastTargetY; // Remember last target position
+  private int targetLockCount; // Track how long we've been targeting the same enemy
   private double formationX, formationY;
-  private boolean readyAlpha = false;
-  private boolean readyBeta = false;
-  private boolean readyGamma = false;
-  
-  // Détection d'ennemis
-  private double lastEnemyX = 0;
-  private double lastEnemyY = 0;
-  
-  // Communication
-  private ArrayList<String> receivedMessages;
-  
-  // Suivi des ennemis - Nouvelle structure pour le tracking amélioré
-  private Map<Integer, EnemyInfo> enemyTracker = new HashMap<>();
-  private int targetEnemyId = -1;
-  private long lastScanTime = 0;
-  
-  // Variables pour l'estimation de position avec Kalman
-  private double estimatedX, estimatedY;
-  private double uncertaintyX = 1.0, uncertaintyY = 1.0;
-  private double velocityX = 0.0, velocityY = 0.0; // Estimation de la vitesse
-  private double lastUpdateTime = 0;
-  
-  // Add this at the class level
-  private double lastTargetX = -1, lastTargetY = -1;
-  private static final double TARGET_CHANGE_THRESHOLD = 50.0;
 
-  // Add these variables to your class
-  private int consecutiveCollisionSteps = 0;
-  private boolean tryingMoveBack = true; // Tracks which strategy we're using
-
-  // État de vie des robots de l'équipe
-  private boolean isAlphaAlive = true;
-  private boolean isBetaAlive = true;
-  private boolean isGammaAlive = true;
-  private boolean teamMemberDied = false; // Indique si un membre de l'équipe est mort
-
-  // Ajouter au niveau de la classe:
-  private int nextEnemyId = 1;
-  private Map<Integer, double[]> enemyPositions = new HashMap<>();
-
-  private int persistentTargetId = -1;
-  private long lastTargetUpdateTime = 0;
-  private static final long TARGET_PERSISTENCE_TIME = 5000; // 5 secondes
-
-  // Variables pour le consensus de cible
-  private int teamConsensusTargetId = -1;
-  private Map<Integer, Integer> targetVotes = new HashMap<>(); // Comptage des votes pour chaque cible
-  private long lastTargetBroadcastTime = 0;
-  private static final long TARGET_BROADCAST_INTERVAL = 500; // Intervalle de diffusion des préférences de cible en ms
-
-  // --- CONSTRUCTEUR ---
+  // ---CONSTRUCTORS---//
   public teamMain() {
     super();
-  }
-  
-  // Nouvelle classe pour stocker les informations de suivi des ennemis
-  private class EnemyInfo {
-    public double x;
-    public double y;
-    public double lastX;
-    public double lastY;
-    public long lastSeen;
-    public double distance;
-    public IRadarResult.Types type;
-    
-    public EnemyInfo(double x, double y, double distance, IRadarResult.Types type) {
-      this.x = x;
-      this.y = y;
-      this.lastX = x;
-      this.lastY = y;
-      this.lastSeen = System.currentTimeMillis();
-      this.distance = distance;
-      this.type = type;
-    }
-    
-    // Mettre à jour la position et calculer la direction et vitesse estimées
-    public void update(double newX, double newY, double distance) {
-      this.lastX = this.x;
-      this.lastY = this.y;
-      this.x = newX;
-      this.y = newY;
-      this.distance = distance;
-      this.lastSeen = System.currentTimeMillis();
-    }
-    
-    // Estimer la position future pour améliorer la précision du tir
-    // If needed, invert Y component for prediction
-    public double[] predictPosition(int timeSteps) {
-      // Calculer le vecteur de déplacement
-      double dx = x - lastX;
-      double dy = y - lastY;
-      
-      // Calculer le temps écoulé depuis la dernière mise à jour
-      long deltaTime = System.currentTimeMillis() - lastSeen;
-      long previousDeltaTime = 100; // estimation raisonnable par défaut
-      
-      // Extrapoler la distance parcourue en fonction du temps
-      double timeRatio = Math.min(2.0, Math.max(0.1, 100.0 / Math.max(1, deltaTime)));
-      
-      // Position prédite ajustée par le facteur temps
-      double predictedX = x + (dx * timeSteps * timeRatio);
-      double predictedY = y + (dy * timeSteps * timeRatio);
-      
-      // Limiter la prédiction à l'arène
-      predictedX = Math.min(Math.max(predictedX, 50), ARENA_WIDTH - 50);
-      predictedY = Math.min(Math.max(predictedY, 50), ARENA_HEIGHT - 50);
-      
-      return new double[] { predictedX, predictedY };
-    }
+    teammates = new HashMap<Integer, ArrayList<Double>>();
+    ArrayList<Double> temp = new ArrayList<Double>(3);
+    temp.add(0.);
+    temp.add(0.);
+    temp.add(0.);
+    teammates.put(ALPHA, temp);
+    teammates.put(BETA, temp);
+    teammates.put(GAMMA, temp);
+    teammates.put(ROCKY, temp);
+    teammates.put(MARIO, temp);
+    enemyTargets = new ArrayList<ArrayList<Double>>(5);
+    randomGenerator = new Random();
+    lastTargetX = 0;
+    lastTargetY = 0;
+    targetLockCount = 0;
   }
 
-  // --- INITIALISATION ---
+  // ---ABSTRACT-METHODS-IMPLEMENTATION---//
   public void activate() {
-    determineInitialPosition();
     myTeam = determineTeam();
-    
-    if (whoAmI == GAMMA) {
-      myX = (myTeam == TEAM_A) ? Parameters.teamAMainBot1InitX : Parameters.teamBMainBot1InitX;
-      myY = (myTeam == TEAM_A) ? Parameters.teamAMainBot1InitY : Parameters.teamBMainBot1InitY;
-    } else if (whoAmI == BETA) {
-      myX = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitX : Parameters.teamBMainBot2InitX;
-      myY = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitY : Parameters.teamBMainBot2InitY;
-    } else if (whoAmI == ALPHA) {
-      myX = (myTeam == TEAM_A) ? Parameters.teamAMainBot3InitX : Parameters.teamBMainBot3InitX;
-      myY = (myTeam == TEAM_A) ? Parameters.teamAMainBot3InitY : Parameters.teamBMainBot3InitY;
-    }
-
-    // Initialisation des variables
-    state = TRIANGLE_FORMATION;
-    isMoving = false;
-    fireOrder = false;
-    fireRythm = 0;
-    oldAngle = getHeading();
-    receivedMessages = new ArrayList<>();
-    alive = true;
-    targetX = ARENA_WIDTH/2;
-    targetY = ARENA_HEIGHT/2;
-    countDown = 0;
-    
-    // Initialisation du filtre de Kalman
-    estimatedX = myX;
-    estimatedY = myY;
-    velocityX = 0.0;
-    velocityY = 0.0;
-    lastUpdateTime = System.currentTimeMillis();
-    
-    // Définition de la position cible
-    initializeFormationPosition();
-
-    // Initialiser les variables d'état de vie
-    isAlphaAlive = true;
-    isBetaAlive = true;
-    isGammaAlive = true;
-    teamMemberDied = false;
-  }
-  
-  private void initializeFormationPosition() {
-    double centerX = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitX + 100 : Parameters.teamBMainBot2InitX - 100;
-    double centerY = (myTeam == TEAM_A) ? Parameters.teamAMainBot2InitY : Parameters.teamBMainBot2InitY;
-    double[] formationPosition = calculateFormationPosition(centerX, centerY, whoAmI);
-    formationX = formationPosition[0]; 
-    formationY = formationPosition[1];
-  }
-  
-  private void determineInitialPosition() {
-    whoAmI = GAMMA;
-    for (IRadarResult o : detectRadar()) {
+    // ODOMETRY CODE
+    robotId = GAMMA;
+    for (IRadarResult o : detectRadar())
       if (isSameDirection(o.getObjectDirection(), Parameters.NORTH))
-        whoAmI = ALPHA;
+        robotId = ALPHA;
+    for (IRadarResult o : detectRadar())
+      if (isSameDirection(o.getObjectDirection(), Parameters.SOUTH) && robotId != GAMMA)
+        robotId = BETA;
+
+    if (myTeam) {
+      // KD RUNNERS
+      if (robotId == GAMMA) {
+        positionX = Parameters.teamAMainBot1InitX;
+        positionY = Parameters.teamAMainBot1InitY;
+      } else {
+        positionX = Parameters.teamAMainBot2InitX;
+        positionY = Parameters.teamAMainBot2InitY;
+      }
+      if (robotId == ALPHA) {
+        positionX = Parameters.teamAMainBot3InitX;
+        positionY = Parameters.teamAMainBot3InitY;
+      }
+    } else {
+      // FANTOM DANGER
+      if (robotId == GAMMA) {
+        positionX = Parameters.teamBMainBot1InitX;
+        positionY = Parameters.teamBMainBot1InitY;
+      } else {
+        positionX = Parameters.teamBMainBot2InitX;
+        positionY = Parameters.teamBMainBot2InitY;
+      }
+      if (robotId == ALPHA) {
+        positionX = Parameters.teamBMainBot3InitX;
+        positionY = Parameters.teamBMainBot3InitY;
+      }
     }
-    for (IRadarResult o : detectRadar()) {
-      if (isSameDirection(o.getObjectDirection(), Parameters.SOUTH) && whoAmI != GAMMA)
-        whoAmI = BETA;
-    }
-    
-    // Définir la position initiale selon l'identité du robot
- 
-  
+
+    double centerX = (myTeam) ? Parameters.teamAMainBot2InitX + 100 : Parameters.teamBMainBot2InitX - 100;
+    double centerY = (myTeam) ? Parameters.teamAMainBot2InitY : Parameters.teamBMainBot2InitY;
+    double[] formationPosition = calculateFormationPosition(centerX, centerY, robotId);
+    formationX = formationPosition[0];
+    formationY = formationPosition[1];
+
+    currentState = TRIANGLE_FORMATION;
+    isMovingForward = false;
+    firingEnabled = false;
+    cooldownCounter = 0;
+    targetX = 0;
+    targetY = 0;
+    currentStep = 0;
+    backMoveStartStep = 0;
+    needNewAimAngle = false;
+    isMovingBackward = false;
+    counter = 0;
+    targetLockCount = 0;
   }
-  
-  // --- BOUCLE PRINCIPALE ---
+
   public void step() {
-    // System.out.println(getWhoAmIString() + " state :" + state + " targetX: " + targetX + " targetY: " + targetY);
-    // Print radar information for debugging
-    // for (IRadarResult o : detectRadar()) {
-    //   System.out.println("Radar detected: Type=" + o.getObjectType() + 
-    //              ", Distance=" + o.getObjectDistance() + 
-    //              ", Direction=" + o.getObjectDirection());
-    // }
-    // Print the list of enemies being tracked
-    updateOdometry();
-   
-    // Vérification de la santé
-    if (getHealth() < 1) {
-      sendMessage(ROGER, false);
+    currentStep++;
+    cooldownCounter++;
+    if (cooldownCounter >= FIRE_COOLDOWN)
+      cooldownCounter = 0;
 
-    }
-    // Passer en mode chasse si un membre de l'équipe est mort et qu'on n'est pas déjà en chasse
-    if (teamMemberDied && state != HUNT_MODE && state != SINK && targetEnemyId != -1) {
-      sendLogMessage("Team member died, switching to hunt mode");
-      state = HUNT_MODE;
+    if (counter > 460) {
+      counter = 0;
     }
 
-    logDebugMessages();
-    processIncomingMessages();
-    
-    // Gestion de la détection et du tir
-    handleRadarDetection();
+    if (getHealth() == 0)
+      currentState = SINK;
 
-    // Gérer le cooldown du tir 
-
-    fireRythm++;
-    if (fireRythm >= FIRE_COOLDOWN) fireRythm = 0;
-    // Gestion des états
-    switch (state) {
-      case TRIANGLE_FORMATION:
-        handleTriangleFormation();
-        break;
-      case FINAL_ORIENTATION:
-        handleFinalOrientation();
-        break;
-      case DODGE:
-        handleDodgeState();
-        break;
-      case MOVETASK:
-        handleMoveTask();
-        break;
-      case TURNLEFTTASK:
-        handleTurnLeftTask();
-        break;
-      case HUNT_MODE:
-        handleHuntMode();
-        break;
-        
+    // ODOMETRY CODE
+    if (isMovingForward) {
+      positionX += Parameters.teamAMainBotSpeed * Math.cos(myGetHeading());
+      positionY += Parameters.teamAMainBotSpeed * Math.sin(myGetHeading());
+      realCoords();
+      isMovingForward = false;
     }
-    
-        // Logique de tir améliorée
-        // Dans la méthode step(), remplacer le bloc de tir par:
-       if (fireRythm == 0 && targetEnemyId != -1 && friendlyFire) {
-          EnemyInfo target = enemyTracker.get(targetEnemyId);
-      
-          if (target != null && target.distance < MAX_FIRING_DISTANCE) {
-              // Utiliser la prédiction de position pour augmenter la précision
-              double[] predictedPos = target.predictPosition(2);
-              
-              // Vérifier s'il y a des obstacles avant de tirer
-              if (isLineOfFireClear(predictedPos[0], predictedPos[1])) {
-                  firePosition(predictedPos[0], predictedPos[1]);
-              } 
-          }else{
-              // Si la cible est hors de portée, arrêter de tirer
-              if (isLineOfFireClear(myX + 1000 * Math.cos(getHeading()), 
-              myY + 1000 * Math.sin(getHeading()))) {
-fire(getHeading());
-}
-          }
-      } else if (fireRythm == 0 && friendlyFire) {
-          // Tir aléatoire - vérifier qu'il n'y a pas d'obstacle directement devant
-          if (isLineOfFireClear(myX + 1000 * Math.cos(getHeading()), 
-                              myY + 1000 * Math.sin(getHeading()))) {
-              fire(getHeading());
-          }
-      }
-        
-    // Nettoyer les ennemis qui n'ont pas été détectés pendant un certain temps
-    cleanupStaleEnemies();
-    // Appeler selectTarget pour mettre à jour la cible périodiquement
-    selectTarget();
-    // Mise à jour de la cible consensuelle si nécessaire
-    updateTeamConsensusTarget();
-  }
-  
-  // --- HANDLERS POUR LES DIFFÉRENTS ÉTATS ---
-  private void handleTriangleFormation() {
-    double distToTarget = Math.hypot(myX - formationX, myY - formationY);
-    if (distToTarget < 30 || ( distToTarget < 100 && (checkEnnemie() || isWreckNearby()))) {
-      state = FINAL_ORIENTATION;
-    } else {
-      if(!checkTeamCollision())
+
+    if (isMovingBackward) {
+      positionX -= Parameters.teamAMainBotSpeed * Math.cos(myGetHeading());
+      positionY -= Parameters.teamAMainBotSpeed * Math.sin(myGetHeading());
+      realCoords();
+      isMovingBackward = false;
+    }
+    // DEBUG MESSAGE
+    boolean debug = true;
+    if (debug && robotId == ALPHA && currentState != SINK) {
+      sendLogMessage("#ALPHA *thinks* (x,y)= (" + (int) positionX + ", " + (int) positionY + ") theta= "
+          + (int) (myGetHeading() * 180 / (double) Math.PI) + "°. #State= " + currentState);
+    }
+    if (debug && robotId == BETA && currentState != SINK) {
+      sendLogMessage("#BETA *thinks* (x,y)= (" + (int) positionX + ", " + (int) positionY + ") theta= "
+          + (int) (myGetHeading() * 180 / (double) Math.PI) + "°. #State= " + currentState);
+    }
+    if (debug && robotId == GAMMA && currentState != SINK) {
+      sendLogMessage("#GAMMA *thinks* (x,y)= (" + (int) positionX + ", " + (int) positionY + ") theta= "
+          + (int) (myGetHeading() * 180 / (double) Math.PI) + "°. #State= " + currentState);
+    }
+    if (debug && firingEnabled) {
+      counter++;
+      sendLogMessage("Firing enemy!!");
+    }
+    if (currentState == TRIANGLE_FORMATION) {
+      double distToTarget = Math.hypot(positionX - formationX, positionY - formationY);
+      if (distToTarget < 70) {
+        currentState = FINAL_ORIENTATION;
+      } else {
         moveToCoordinates(formationX, formationY);
-    }
-  }
-
-      // Rest of the method remains the same
-      private boolean isWreckNearby() {
-        for (IRadarResult o : detectRadar()) {
-          if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 200) {
-            return true;
-          }
-        }
-        return false;
-      }
-  
-  private void handleFinalOrientation() {
-    double targetDirection = (myTeam == TEAM_A) ? Parameters.EAST : Parameters.WEST;
-    if (isSameDirection(getHeading(), targetDirection)) {
-      if ((whoAmI == ALPHA && !readyAlpha) || (whoAmI == BETA && !readyBeta) || (whoAmI == GAMMA && !readyGamma)) {
-        sendMessage(ROGER, true);
-      }
-
-      if (readyAlpha && readyBeta && readyGamma) {
-        readyAlpha = readyBeta = readyGamma = false; 
-        state = MOVETASK;
-      }
-    } else {
-      turnTowards(targetDirection);
-    }
-  }
-  
-  private void handleDodgeState() {
-    boolean obstacleDetected = false;
-    double dodgeX = myX;
-    double dodgeY = myY;
-  
-    for (IRadarResult o : detectRadar()) {
-      if ((o.getObjectType() == IRadarResult.Types.Wreck || isEnemyBot(o.getObjectType())) && o.getObjectDistance() < 300) {
-        obstacleDetected = true;
-        double obstacleX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-        double obstacleY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-  
-        // Calculer une position d'esquive en diagonale
-        if (Math.hypot(obstacleX - targetX, obstacleY - targetY) < COLLISION_THRESHOLD * 2) {
-          // Si l'obstacle est sur la cible, déplacer la cible
-          targetX = targetX + 500;
-          targetY = targetX > obstacleY ? targetX + 300 : targetX - 300;
-        } 
-        break;
-      }
-    }    
-    if (obstacleDetected) {
-     moveToCoordinates(targetX, targetY);
-    } else {
-      // Revenir à la formation
-      state = TRIANGLE_FORMATION;
-    }
-  }
-  
-  private void handleMoveTask() {
-    if (isObstacleAhead() && alive) {
-      state = TURNLEFTTASK;
-      oldAngle = getHeading();
-      // Initialisation du sous-état TURNLEFTTASK
-      turnLeftSubState = TURNLEFT_BACKWARD;
-      backwardStepCount = 0;
-      // Définir l'angle cible (opposé à la direction actuelle)
-      targetRotation = normalizeHeading(getHeading() + Math.PI);
-      sendLogMessage("Obstacle ahead, initiating turn maneuver. Target rotation: " + targetRotation);
-    } else {
-      // System.out.println("Target coordinates: X=" + targetX + ", Y=" + targetY);
-      double[] pos = calculateFormationPosition(targetX - 100, targetY, whoAmI);
-      formationX = pos[0];
-      formationY = pos[1];
-      if (alive  && state != TRIANGLE_FORMATION && state != FINAL_ORIENTATION)
-      state = DODGE;
-    }
-  }
-  
-  private void handleTurnLeftTask() {
-    switch (turnLeftSubState) {
-      case TURNLEFT_BACKWARD:
-        // Phase 1: Reculer pour éviter l'obstacle
-        if (backwardStepCount < 5) { // Nombre d'étapes de recul
-          myMoveBack();
-          backwardStepCount++;
-          sendLogMessage("Turn maneuver: backing up step " + backwardStepCount);
-        } else {
-          turnLeftSubState = TURNLEFT_ROTATE;
-          sendLogMessage("Turn maneuver: starting rotation");
-        }
-        break;
-        
-      case TURNLEFT_ROTATE:
-        // Phase 2: Tourner pour faire face à la direction opposée
-        if (!isFacingDirection(targetRotation)) {
-          // Déterminer le sens de rotation optimal (gauche ou droite)
-          double angleDiff = normalizeAngleDifference(targetRotation - getHeading());
-          if (Math.abs(angleDiff) < Math.PI) {
-            // Chemin le plus court est dans le sens direct
-            stepTurn(angleDiff > 0 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
-          } else {
-            // Chemin le plus court est dans le sens inverse
-            stepTurn(angleDiff > 0 ? Parameters.Direction.LEFT : Parameters.Direction.RIGHT);
-          }
-          sendLogMessage("Turn maneuver: rotating, current heading: " + getHeading() + 
-                        ", target: " + targetRotation + ", diff: " + angleDiff);
-        } else {
-          turnLeftSubState = TURNLEFT_COMPLETE;
-          sendLogMessage("Turn maneuver: rotation complete");
-        }
-        break;
-        
-      case TURNLEFT_COMPLETE:
-        // Phase 3: Retour à la formation triangulaire
-        state = TRIANGLE_FORMATION;
-        System.out.println("à ok");
-        sendLogMessage("Turn maneuver complete, resuming triangle formation");
-        break;
-    }
-  }
-  
-  // --- NOUVELLE MÉTHODE POUR GÉRER LE MODE CHASSE ---
-  private void handleHuntMode() {
-    // Vérification de cible existante (code déjà présent)
-    if (targetEnemyId == -1) {
-        selectTarget();
-        if (targetEnemyId == -1) {
-            state = TRIANGLE_FORMATION;
-            return;
-        }
-    }
-    
-    // Récupération des infos sur la cible (code déjà présent)
-    EnemyInfo target = enemyTracker.get(targetEnemyId);
-    if (target == null) {
-        selectTarget();
-        if (targetEnemyId == -1) {
-            state = TRIANGLE_FORMATION;
-            return;
-        }
-        target = enemyTracker.get(targetEnemyId);
-    }
-    
-    // NOUVEAU CODE: Logique d'encerclement
-    double[] flankPoint = calculateFlankingPosition(target.x, target.y);
-    double interceptX = flankPoint[0];
-    double interceptY = flankPoint[1];
-    
-    // Déplacement vers le point d'encerclement
-    double distance = Math.hypot(interceptX - myX, interceptY - myY);
-    
-    if (distance < 30) {
-        // Si on est suffisamment proche, on s'arrête et on tire
-        fireRythm = 0; // Pour permettre de tirer immédiatement
-    } else {
-        // Si on est loin, on se déplace vers le point d'encerclement
-        moveToCoordinatesAggressive(interceptX, interceptY);
-    }
-    
-    // Envoyer des informations de débogage
-    sendLogMessage("Encircling: target=" + targetEnemyId + 
-                  ", distance=" + (int)distance + 
-                  ", flanking at (" + (int)interceptX + "," + (int)interceptY + ")");
-}
-  
-  // --- MÉTHODES DE DÉTECTION ET DE RÉACTION ---
-  private void handleRadarDetection() {
-    friendlyFire = true;    
-    // Actualiser le temps de scan
-    lastScanTime = System.currentTimeMillis();
-    
-    // Réinitialiser les distances pour les différents types d'ennemis
-    double closestMainBotDistance = Double.MAX_VALUE;
-    double closestSecondaryBotDistance = Double.MAX_VALUE;
-    int closestMainBotId = -1;
-    int closestSecondaryBotId = -1;
-    
-    for (IRadarResult o : detectRadar()) {
-      // Détecter les ennemis
-      if (isEnemyBot(o.getObjectType())) {
-        double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-        double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-        
-        // Générer un ID unique basé sur la position
-        int enemyId = getOrCreateEnemyId(enemyX, enemyY);
-        
-        // Mettre à jour le tracker d'ennemis
-        if (enemyTracker.containsKey(enemyId)) {
-          enemyTracker.get(enemyId).update(enemyX, enemyY, o.getObjectDistance());
-          // Make sure to update the type information
-          enemyTracker.get(enemyId).type = o.getObjectType();
-        } else {
-          enemyTracker.put(enemyId, new EnemyInfo(enemyX, enemyY, o.getObjectDistance(), o.getObjectType()));
-        }
-        
-        // Distinguer entre MainBot et SecondaryBot et garder le plus proche de chaque type
-        if (o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
-          if (o.getObjectDistance() < closestMainBotDistance) {
-            closestMainBotDistance = o.getObjectDistance();
-            closestMainBotId = enemyId;
-            
-            // Stocker les coordonnées pour les autres robots
-            lastEnemyX = enemyX;
-            lastEnemyY = enemyY;
-            
-            // Include type code in the message (1 for MainBot)
-            sendMessage(FIRE, enemyX, enemyY, o.getObjectDistance(), 1);
-          }
-        } else if (o.getObjectType() == IRadarResult.Types.OpponentSecondaryBot) {
-          if (o.getObjectDistance() < closestSecondaryBotDistance) {
-            closestSecondaryBotDistance = o.getObjectDistance();
-            closestSecondaryBotId = enemyId;
-            
-            // Stocker les coordonnées uniquement si aucun MainBot n'est détecté
-            if (closestMainBotId == -1) {
-              lastEnemyX = enemyX;
-              lastEnemyY = enemyY;
-              
-              // Include type code in the message (2 for SecondaryBot)
-              sendMessage(FIRE, enemyX, enemyY, o.getObjectDistance(), 2);
-            }
-          }
-        }
-      }
-      
-      // Vérifier le risque de tir ami
-      if ((o.getObjectType() == IRadarResult.Types.TeamMainBot || 
-      o.getObjectType() == IRadarResult.Types.TeamSecondaryBot) && onTheWay(o.getObjectDirection())) {
-        friendlyFire = false;
-      }
-      
-      // Vérifier les obstacles pour le DODGE
-      if (state != DODGE && 
-          ((o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 150) || 
-          checkEnnemie()) && alive) {
-        handleObstacleDetection(o);
-      }
-    }
-    
-    // Prioriser les MainBots sur les SecondaryBots
-    if (closestMainBotId != -1) {
-      targetEnemyId = closestMainBotId;
-      EnemyInfo target = enemyTracker.get(targetEnemyId);
-      targetX = target.x;
-      targetY = target.y;
-    } else if (closestSecondaryBotId != -1) {
-      targetEnemyId = closestSecondaryBotId;
-      EnemyInfo target = enemyTracker.get(targetEnemyId);
-      targetX = target.x; 
-      targetY = target.y;
-    }
-  }
-  
-  // Méthode pour supprimer les ennemis qui n'ont pas été détectés récemment
-  private void cleanupStaleEnemies() {
-    long currentTime = System.currentTimeMillis();
-    enemyTracker.entrySet().removeIf(entry -> 
-        currentTime - entry.getValue().lastSeen > ENEMY_TRACK_TIMEOUT);
-
-    // Si la cible actuelle n'est plus dans le tracker, réinitialiser
-    // if (whoAmI == GAMMA) {
-    //   for (Map.Entry<Integer, EnemyInfo> entry : enemyTracker.entrySet()) {
-    //     EnemyInfo enemy = entry.getValue();
-    //     System.out.println("Enemy ID: " + entry.getKey() + 
-    //                        ", Position: (" + enemy.x + ", " + enemy.y + 
-    //                        "), Last Seen: " + enemy.lastSeen + 
-    //                        ", Distance: " + enemy.distance);
-    //   }
-    // }
-    if (targetEnemyId != -1 && !enemyTracker.containsKey(targetEnemyId)) {
-      targetEnemyId = -1;
-      fireOrder = false;
-    }
-  }
-  
-  private boolean isEnemyBot(IRadarResult.Types type) {
-    return type == IRadarResult.Types.OpponentMainBot || 
-           type == IRadarResult.Types.OpponentSecondaryBot;
-  }
-  
-
-  
-  private void processEnemyDetection(IRadarResult o) {
-    double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-    double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-    
-    // Add type code: 1 for MainBot, 2 for SecondaryBot
-    int typeCode = 0;
-    if (o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
-      typeCode = 1;
-    } else if (o.getObjectType() == IRadarResult.Types.OpponentSecondaryBot) {
-      typeCode = 2;
-    }
-    
-    sendMessage(FIRE, enemyX, enemyY, o.getObjectDistance(), typeCode);
-  }
-  
-  private void handleObstacleDetection(IRadarResult o) {
-    state = DODGE;
-    double obstacleX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-    double obstacleY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-  }
-  
-  private boolean isObstacleAhead() {
-    for (IRadarResult o : detectRadar()) {
-      if (isRoughlySameDirection(o.getObjectDirection(), getHeading()) &&
-          o.getObjectDistance() <= 50) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // --- MÉTHODES DE DÉPLACEMENT ---
- /**
- * Déplace le robot vers (targetX, targetY) en évitant les obstacles.
- * Cette méthode vérifie d'abord si le chemin direct est dégagé.
- * Sinon, elle cherche une direction alternative en tournant par petits incréments.
- */
-private void moveToCoordinates(double targetX, double targetY) {
-    // Vérifier les collisions imminentes
-    IRadarResult nearestObstacle = null;
-    double minDistance = COLLISION_THRESHOLD * 1.2;
-    
-    for (IRadarResult o : detectRadar()) {
-        if (o.getObjectType() != IRadarResult.Types.BULLET && 
-            o.getObjectDistance() < minDistance) {
-            minDistance = o.getObjectDistance();
-            nearestObstacle = o;
-        }
-    }
-    
-    // Si obstacle imminent, effectuer une manœuvre d'évitement
-    if (nearestObstacle != null) {
-        double obstacleDirection = nearestObstacle.getObjectDirection();
-        double avoidanceAngle = normalizeHeading(obstacleDirection + Math.PI);
-        
-        // Si l'obstacle est vraiment proche, reculer
-        if (minDistance < COLLISION_THRESHOLD * 0.5) {
-            if (isFacingDirection(obstacleDirection)) {
-                myMoveBack();
-            } else {
-                turnTowards(avoidanceAngle);
-            }
-            return;
-        }
-        
-        // Sinon, contourner l'obstacle
-        double perpendicular = normalizeHeading(obstacleDirection + Math.PI/2);
-        double targetAngle = Math.atan2(targetY - myY, targetX - myX);
-        
-        // Choisir la direction perpendiculaire qui rapproche le plus de la cible
-        double option1 = perpendicular;
-        double option2 = normalizeHeading(perpendicular + Math.PI);
-        double diff1 = Math.abs(normalizeAngleDifference(option1 - targetAngle));
-        double diff2 = Math.abs(normalizeAngleDifference(option2 - targetAngle));
-        
-        double bestAvoidanceAngle = (diff1 < diff2) ? option1 : option2;
-        turnAndMove(bestAvoidanceAngle);
         return;
-    }
-    
-    // Pas d'obstacle imminent, continuer vers la cible
-    double dx = targetX - myX;
-    double dy = targetY - myY;
-    double distance = Math.hypot(dx, dy);
-    
-    if (distance < 30) {
-        return; // Destination atteinte
-    }
-    
-    double angleToTarget = normalizeHeading(Math.atan2(dy, dx));
-    turnAndMove(angleToTarget);
-}
-    
-private String getWhoAmIString() {
-switch (whoAmI) {
-  case ALPHA:
-    return "I am ALPHA";
-  case BETA:
-    return "I am BETA";
-  case GAMMA:
-    return "I am GAMMA";
-  default:
-    return "Unknown identity";
-}
-}
+      }
 
-private void turnAndMove(double desiredAngle) {
-  double angleDiff = normalizeAngleDifference(desiredAngle - getHeading());
-  
-  if (Math.abs(angleDiff) > Math.PI/2) {
-    double oppositeAngle = normalizeHeading(desiredAngle + Math.PI);
-    double newDiff = normalizeAngleDifference(oppositeAngle - getHeading());
-    
-    if (Math.abs(newDiff) > ANGLE_PRECISION) {
-      stepTurn(newDiff > 0 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
-    } else {
-      myMoveBack();
     }
-  } else if (Math.abs(angleDiff) > ANGLE_PRECISION) {
-    stepTurn(angleDiff > 0 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
-  } else {
-    myMove();
-  }
-}
-/**
-* Vérifie si un obstacle se trouve sur le chemin dans la direction donnée.
-* On parcourt les relevés du radar et si un obstacle se trouve dans un cône défini
-* par 'tolerance' et à une distance critique, on considère le chemin bloqué.
-*/
-private boolean isObstacleOnPath(double angle) {
-    for (IRadarResult o : detectRadar()) {
-        if (o.getObjectType() == IRadarResult.Types.BULLET) continue;
-        
-        double diff = normalizeAngleDifference(o.getObjectDirection() - angle);
-        
-        // Ajuster la tolérance en fonction de la distance
-        // Plus l'obstacle est proche, plus la tolérance est stricte
-        double tolerance = 0.5 - (0.3 * Math.min(1.0, COLLISION_THRESHOLD / o.getObjectDistance()));
-        
-        if (Math.abs(diff) < tolerance && o.getObjectDistance() < COLLISION_THRESHOLD * 2) {
-            return true;
-        }
-    }
-    return false;
-}
 
-  private boolean isObstacleAhead(double direction) {
-    for (IRadarResult o : detectRadar()) {
-      if (isRoughlySameDirection(o.getObjectDirection(), direction) &&
-          o.getObjectDistance() <= COLLISION_THRESHOLD*1.02) {
-        return true;
+    if (currentState == FINAL_ORIENTATION) {
+      double targetDirection = (myTeam) ? Parameters.EAST : Parameters.WEST;
+      if (isSameDirection(getHeading(), targetDirection)) {
+        currentState = MOVETASK;
+      } else {
+        double angleDiff = normalizeAngleDifference(targetDirection - getHeading());
+        stepTurn(angleDiff > 0 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
       }
     }
-    return false;
-  }
-  
-  private boolean moveAlongAxis(double targetDirection) {
-    if (!isSameDirection(getHeading(), targetDirection)) {
-      turnTowards(targetDirection);
-      return false;
-    } else {
+
+    // COMMUNICATION
+    enemyTargets.clear(); // prepare for the next targets set
+    ArrayList<String> messages = fetchAllMessages();
+    for (String m : messages)
+      if (Integer.parseInt(m.split(":")[1]) == robotId || Integer.parseInt(m.split(":")[1]) == TEAM)
+        process(m);
+
+    broadcast(
+        robotId + ":" + TEAM + ":" + POSITION + ":" + positionX + ":" + positionY + ":" + getHeading() + ":" + OVER);
+
+    // RADAR DETECTION
+    for (IRadarResult o : detectRadar()) {
+      if (o.getObjectType() == Types.OpponentMainBot || o.getObjectType() == Types.OpponentSecondaryBot) {
+        double enemyX = positionX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
+        double enemyY = positionY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
+
+        // Add threat level assessment
+        int threatLevel = assessThreat(o);
+        broadcast(
+            robotId + ":" + TEAM + ":" + FIRE + ":" + (o.getObjectType() == Types.OpponentMainBot ? MAIN : SECONDARY)
+                + ":" + enemyX + ":" + enemyY + ":" + threatLevel + ":" + OVER);
+      }
+      if ((o.getObjectDistance() < 120 && o.getObjectType() != Types.BULLET)
+          || detectFront().getObjectType() == IFrontSensorResult.Types.WALL) {
+        if (currentState == MOVETASK) {
+          // System.out.println("detected something, must move back");
+          currentState = MOVEBACKTASK;
+          backMoveStartStep = currentStep;
+          return;
+        }
+      }
+    }
+    if (firingEnabled && !needNewAimAngle) {
+      setTarget();
+    }
+
+    // AUTOMATON
+
+    if (positionX <= Parameters.teamAMainBotRadius) {
+      if (isHeading(Parameters.EAST)) {
+        currentState = MOVETASK;
+        return;
+      }
+      currentState = TURNEASTTASK;
+      return;
+    }
+    if (positionX >= (3000 - Parameters.teamAMainBotRadius)) {
+      if (isHeading(Parameters.WEST)) {
+        currentState = MOVETASK;
+        return;
+      }
+      currentState = TURNWESTTASK;
+      return;
+    }
+    if (positionY <= Parameters.teamAMainBotRadius) {
+      if (isHeading(Parameters.SOUTH)) {
+        currentState = MOVETASK;
+        return;
+      }
+      currentState = TURNSOUTHTASK;
+      return;
+    }
+    if (positionY >= (2000 - Parameters.teamAMainBotRadius)) {
+      currentState = TURNNORTHTASK;
+      if (isHeading(Parameters.NORTH)) {
+        currentState = MOVETASK;
+        return;
+      }
+      return;
+    }
+
+    if (currentState == TRIANGLE_FORMATION) {
+      if (currentStep > 100 && canFireLatency()) {
+        if (firingEnabled) {
+          if (canIShot(targetX, targetY)) {
+            firePosition(targetX, targetY);
+            return;
+          }
+        }
+        fire(myGetHeading());
+        return;
+      }
       myMove();
-      return true;
+    }
+
+    if (firingEnabled && canFireLatency()) {
+      if (canIShot(targetX, targetY)) {
+        firePosition(targetX, targetY);
+        return;
+      }
+    }
+
+    // Improved hunting behavior
+    if (!firingEnabled && currentStep > 6000 && enemyTargets.size() > 0 && currentState != HUNTINGTASK) {
+      ArrayList<ArrayList<Double>> sortedTargets = prioritizeTargets(enemyTargets);
+
+      if (!sortedTargets.isEmpty()) {
+        double tx = sortedTargets.get(0).get(1);
+        double ty = sortedTargets.get(0).get(2);
+        double distX = Math.abs(tx - positionX);
+        double distY = Math.abs(ty - positionY);
+
+        // Enhanced decision making for hunting
+        if (distance(positionX, positionY, tx, ty) < 600) {
+          currentState = HUNTINGTASK;
+          if (distX > distY || distY < 200) {
+            huntingStrategy = "x";
+          } else {
+            huntingStrategy = "y";
+          }
+          return;
+        }
+      }
+    }
+
+    if (currentState == HUNTINGTASK && !firingEnabled) {
+      if (enemyTargets.isEmpty()) {
+        currentState = MOVETASK;
+        huntingStrategy = "";
+        return;
+      }
+
+      if (huntingStrategy.equals("x")) {
+        double tx = enemyTargets.get(0).get(1);
+        double distX = Math.abs(tx - positionX);
+        if (distX < 200) {
+          huntingStrategy = "";
+          currentState = MOVETASK;
+          return;
+        } else {
+          if (tx < positionX) { // target à gauche
+            if (isHeading(Parameters.WEST)) {
+              myMove();
+              return;
+            } else {
+              if (myGetHeading() < Math.PI && myGetHeading() > 0) {
+                stepTurn(Parameters.Direction.RIGHT);
+              } else {
+                stepTurn(Parameters.Direction.LEFT);
+              }
+              return;
+            }
+          } else { // target à gauche
+            if (isHeading(Parameters.EAST)) {
+              myMove();
+              return;
+            } else {
+              if (myGetHeading() < Math.PI && myGetHeading() > 0) {
+                stepTurn(Parameters.Direction.RIGHT);
+              } else {
+                stepTurn(Parameters.Direction.LEFT);
+              }
+              return;
+            }
+          }
+        }
+      } else {
+        double ty = enemyTargets.get(0).get(2);
+        double distY = Math.abs(ty - positionY);
+        if (distY < 200) {
+          huntingStrategy = "";
+          currentState = MOVETASK;
+          return;
+        } else {
+          if (ty < positionY) { // target en haut
+            if (isHeading(Parameters.NORTH)) {
+              myMove();
+              return;
+            } else {
+              if (myGetHeading() < Math.PI / 2 || myGetHeading() > 3 * Math.PI / 2) {
+                stepTurn(Parameters.Direction.LEFT);
+              } else {
+                stepTurn(Parameters.Direction.RIGHT);
+              }
+              return;
+            }
+          } else { // target en bas
+            if (isHeading(Parameters.SOUTH)) {
+              myMove();
+              return;
+            } else {
+              if (myGetHeading() < Math.PI / 2 || myGetHeading() > 3 * Math.PI / 2) {
+                stepTurn(Parameters.Direction.LEFT);
+              } else {
+                stepTurn(Parameters.Direction.RIGHT);
+              }
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    if (currentState == HUNTINGTASK && firingEnabled) {
+      currentState = MOVETASK;
+      myMove();
+      huntingStrategy = "";
+      return;
+    }
+
+    if (currentState == MOVETASK && detectFront().getObjectType() != IFrontSensorResult.Types.WALL) {
+      // Check radar for enemies and fire at them directly
+      if (canFireLatency()) {
+      for (IRadarResult o : detectRadar()) {
+      if (o.getObjectType() == Types.OpponentMainBot || o.getObjectType() == Types.OpponentSecondaryBot) {
+  
+        double enemyX = positionX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
+        double enemyY = positionY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
+        
+        if (canIShot(enemyX, enemyY)) {
+          firePosition(enemyX, enemyY);
+          return;
+        }
+        }
+      }
+    
+        double angle = randomGenerator.nextDouble() * Math.PI / 6 - Math.PI / 12;
+        double x = positionX + Parameters.bulletRange * Math.cos(myGetHeading() + angle);
+        double y = positionY + Parameters.bulletRange * Math.sin(myGetHeading() + angle);
+        if (canIShot(x, y)) {
+        firePosition(x, y);
+        return;
+      }
+      }
+
+      myMove();
+      return;
+    }
+
+    if (currentState == MOVETASK && detectFront().getObjectType() == IFrontSensorResult.Types.WALL) {
+      if ((positionX > 2915 && positionY > 1915) || (positionX > 2915 && positionY < 85)
+          || (positionX < 85 && positionY < 85) || (positionX < 85 && positionY > 1915)) {
+        currentState = TURNLEFTTASK;
+        targetRotation = getHeading() + Parameters.LEFTTURNFULLANGLE;
+        stepTurn(Parameters.Direction.LEFT);
+        return;
+      } else if (positionX > 2915 || positionX < 85) {
+        if (isHeading(Parameters.EAST) || isHeading(Parameters.WEST)) {
+          currentState = TURNLEFTTASK;
+          targetRotation = getHeading() + Parameters.LEFTTURNFULLANGLE;
+          stepTurn(Parameters.Direction.LEFT);
+          return;
+        } else {
+          myMove();
+          return;
+        }
+      } else if (positionY > 1915 || positionY < 85) {
+        if (isHeading(Parameters.NORTH) || isHeading(Parameters.SOUTH)) {
+          currentState = TURNLEFTTASK;
+          targetRotation = getHeading() + Parameters.LEFTTURNFULLANGLE;
+          stepTurn(Parameters.Direction.LEFT);
+          return;
+        } else {
+          myMove();
+          return;
+        }
+      } else {
+        myMove();
+        return;
+      }
+
+    }
+
+    if (currentState == STANDINGFIRINGTASK) {
+      currentState = MOVETASK;
+      if ((++firingSequenceStep % 2) == 0 && counter < 415) {
+        moveBack();
+        positionX -= Parameters.teamAMainBotSpeed * Math.cos(getHeading());
+        positionY -= Parameters.teamAMainBotSpeed * Math.sin(getHeading());
+        realCoords();
+      } else {
+        myMove();
+      }
+      return;
+    }
+    if (currentState == BACKWARDFIRINGTASK) {
+      currentState = MOVETASK;
+      if ((++firingSequenceStep % 1) == 0) {
+        moveBack();
+        positionX -= Parameters.teamAMainBotSpeed * Math.cos(getHeading());
+        positionY -= Parameters.teamAMainBotSpeed * Math.sin(getHeading());
+        realCoords();
+      } else {
+        myMove();
+      }
+      return;
+    }
+
+    if (currentState == MOVEBACKTASK) {
+      if (currentStep < backMoveStartStep + 25) {
+        myMoveBack();
+        return;
+      } else {
+        if (Math.random() < 0.5) {
+          currentState = TURNLEFTTASK;
+          targetRotation = getHeading() + Parameters.LEFTTURNFULLANGLE;
+          stepTurn(Parameters.Direction.LEFT);
+        } else {
+          currentState = TURNRIGHTTASK;
+          targetRotation = getHeading() + Parameters.RIGHTTURNFULLANGLE;
+          stepTurn(Parameters.Direction.RIGHT);
+        }
+        return;
+      }
+    }
+
+    if (currentState == TURNRIGHTTASK) {
+      if (isHeading(targetRotation)) {
+        currentState = MOVETASK;
+        myMove();
+      } else {
+        stepTurn(Parameters.Direction.RIGHT);
+      }
+      return;
+    }
+
+    if (currentState == TURNLEFTTASK) {
+      if (isHeading(targetRotation)) {
+        currentState = MOVETASK;
+        myMove();
+      } else {
+        stepTurn(Parameters.Direction.LEFT);
+      }
+      return;
+    }
+
+    /* 4 directions turning */
+    if (currentState == TURNNORTHTASK && !(isHeading(Parameters.NORTH))) {
+      if (myGetHeading() < Math.PI / 2 || myGetHeading() > 3 * Math.PI / 2) {
+        stepTurn(Parameters.Direction.LEFT);
+      } else {
+        stepTurn(Parameters.Direction.RIGHT);
+      }
+      return;
+    }
+    if (currentState == TURNNORTHTASK && isHeading(Parameters.NORTH)) {
+      currentState = MOVETASK;
+      myMove();
+      return;
+    }
+    if (currentState == TURNSOUTHTASK && !(isHeading(Parameters.SOUTH))) {
+      if (myGetHeading() < Math.PI / 2 || myGetHeading() > 3 * Math.PI / 2) {
+        stepTurn(Parameters.Direction.RIGHT);
+      } else {
+        stepTurn(Parameters.Direction.LEFT);
+      }
+      return;
+    }
+    if (currentState == TURNSOUTHTASK && isHeading(Parameters.SOUTH)) {
+      currentState = MOVETASK;
+      myMove();
+      return;
+    }
+    if (currentState == TURNEASTTASK && !(isHeading(Parameters.EAST))) {
+      if (myGetHeading() < Math.PI && myGetHeading() > 0) {
+        stepTurn(Parameters.Direction.LEFT);
+      } else {
+        stepTurn(Parameters.Direction.RIGHT);
+      }
+      return;
+    }
+    if (currentState == TURNEASTTASK && isHeading(Parameters.EAST)) {
+      currentState = MOVETASK;
+      myMove();
+      return;
+    }
+    if (currentState == TURNWESTTASK && !(isHeading(Parameters.WEST))) {
+      if (myGetHeading() < Math.PI && myGetHeading() > 0) {
+        stepTurn(Parameters.Direction.RIGHT);
+      } else {
+        stepTurn(Parameters.Direction.LEFT);
+      }
+      return;
+    }
+    if (currentState == TURNWESTTASK && isHeading(Parameters.WEST)) {
+      currentState = MOVETASK;
+      myMove();
+      return;
+    }
+
+    if (currentState == SINK) {
+      // myMove();
+      return;
+    }
+    if (true) {
+      return;
     }
   }
-  
-  private void turnTowards(double targetDirection) {
-    double angleDiff = normalizeAngleDifference(targetDirection - getHeading());
-    stepTurn(angleDiff > 0 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
-  }
-  
+
   private void myMove() {
-    isMoving = true;
+    isMovingForward = true;
     move();
   }
-  
+
   private void myMoveBack() {
-    isMovingBack = true;
+    isMovingBackward = true;
     moveBack();
   }
-  
-  // --- MÉTHODES UTILITAIRES ---
 
-  private double normalizeAngle(double angle) {
-    while (angle > Math.PI)
-      angle -= 2 * Math.PI;
-    while (angle < -Math.PI)
-      angle += 2 * Math.PI;
-    return Math.abs(angle);
+  private double myGetHeading() {
+    return normalizeRadian(getHeading());
   }
-  
-  // Normalise un angle de direction entre -PI et PI
-  private double normalizeHeading(double angle) {
-    while (angle > Math.PI) angle -= 2 * Math.PI;
-    while (angle < -Math.PI) angle += 2 * Math.PI;
-    return angle;  // Retourne l'angle signé, pas sa valeur absolue
+
+  private double normalizeRadian(double angle) {
+    double result = angle;
+    while (result < 0)
+      result += 2 * Math.PI;
+    while (result >= 2 * Math.PI)
+      result -= 2 * Math.PI;
+    return result;
   }
-  
-  // Calcule la différence d'angle normalisée entre deux directions
-  private double normalizeAngleDifference(double diff) {
-    while (diff > Math.PI) diff -= 2 * Math.PI;
-    while (diff < -Math.PI) diff += 2 * Math.PI;
-    return diff;  // Retourne la différence signée, pas sa valeur absolue
-  }
-  
-  private boolean isFacingDirection(double direction) {
-    return Math.abs(normalizeAngleDifference(direction - getHeading())) < ANGLE_PRECISION;
-  }
-  
+
   private boolean isSameDirection(double dir1, double dir2) {
-    return normalizeAngle(dir1 - dir2) < ANGLE_PRECISION;
+    return Math.abs(normalizeRadian(dir1) - normalizeRadian(dir2)) < ANGLEPRECISION;
   }
-  
-  private boolean isRoughlySameDirection(double dir1, double dir2) {
-    return Math.abs(normalizeAngle(dir1) - normalizeAngle(dir2)) < FIRE_ANGLE_PRECISION;
+
+  private void process(String message) {
+    if (Integer.parseInt(message.split(":")[2]) == FIRE) {
+      double x = Double.parseDouble(message.split(":")[4]);
+      double y = Double.parseDouble(message.split(":")[5]);
+      boolean already = false;
+      for (ArrayList<Double> list : enemyTargets) {
+        if ((Math.abs(x - list.get(1)) <= DISTANCEPRECISION) &&
+            (Math.abs(y - list.get(2)) <= DISTANCEPRECISION)) {
+          already = true;
+        }
+      }
+      if (!already) {
+        ArrayList<Double> target = new ArrayList<Double>(3);
+        target.add(Double.parseDouble(message.split(":")[3]));
+        target.add(x);
+        target.add(y);
+        enemyTargets.add(target);
+      }
+      firingEnabled = true;
+    }
+    if (Integer.parseInt(message.split(":")[2]) == POSITION) {
+      ArrayList<Double> temp = new ArrayList<Double>(2);
+      temp.add(Double.parseDouble(message.split(":")[3]));
+      temp.add(Double.parseDouble(message.split(":")[4]));
+      temp.add(Double.parseDouble(message.split(":")[5]));
+      teammates.replace(Integer.parseInt(message.split(":")[0]), temp);
+    }
   }
-  
-  private void firePosition(double x, double y) {
-    // Vérifier si nous avons une cible consensuelle valide
-    if (teamConsensusTargetId != -1 && enemyTracker.containsKey(teamConsensusTargetId)) {
-      EnemyInfo consensusTarget = enemyTracker.get(teamConsensusTargetId);
-      
-      // Si la cible consensuelle est différente de la cible actuelle
-      if (Math.hypot(consensusTarget.x - x, consensusTarget.y - y) > 50) {
-        // Priorité à la cible consensuelle
-        x = consensusTarget.x;
-        y = consensusTarget.y;
-        sendLogMessage("Tir sur cible consensuelle plutôt que cible individuelle");
+
+  private void setTarget() {
+    ArrayList<ArrayList<Double>> realTargets = new ArrayList<ArrayList<Double>>(5);
+    for (ArrayList<Double> target : enemyTargets) {
+      if (distance(positionX, positionY, target.get(1), target.get(2)) <= Parameters.bulletRange) {
+        realTargets.add(target);
       }
     }
-    
-    // Vérifier si la ligne de tir est dégagée
-    if (!isLineOfFireClear(x, y)) {
-        sendLogMessage("Tir bloqué par obstacle - tentative de tir alternatif");
-        
-        // Chercher un angle alternatif pour le tir
-        double baseAngle = Math.atan2(y - myY, x - myX);
-        boolean fireAttempted = false;
-        
-        // Essayer des angles légèrement décalés
-        for (int i = 1; i <= 3 && !fireAttempted; i++) {
-            // Essayer à gauche puis à droite
-            double offsetAngle = i * 0.1; // 0.1, 0.2, 0.3 radians (environ 6, 12, 18 degrés)
-            
-            // Essayer à gauche
-            double testAngle = normalizeHeading(baseAngle - offsetAngle);
-            double testX = myX + 1000 * Math.cos(testAngle);
-            double testY = myY + 1000 * Math.sin(testAngle);
-            
-            if (isLineOfFireClear(testX, testY)) {
-                fire(testAngle);
-                fireAttempted = true;
-                sendLogMessage("Tir alternatif à gauche: " + offsetAngle + " radians");
-                return;
-            }
-            
-            // Essayer à droite
-            testAngle = normalizeHeading(baseAngle + offsetAngle);
-            testX = myX + 1000 * Math.cos(testAngle);
-            testY = myY + 1000 * Math.sin(testAngle);
-            
-            if (isLineOfFireClear(testX, testY)) {
-                fire(testAngle);
-                fireAttempted = true;
-                sendLogMessage("Tir alternatif à droite: " + offsetAngle + " radians");
-                return;
-            }
-        }
-        
-        // Si aucun angle alternatif ne fonctionne, ne pas tirer
-        if (!fireAttempted) {
-            sendLogMessage("Impossible de trouver une ligne de tir dégagée");
-            return;
-        }
-    } else {
-        // Ligne de tir dégagée, tirer normalement
-        double angle;
-        if (myX <= x) {
-            angle = Math.atan((y - myY) / (x - myX));
+
+    // Use our new prioritization method
+    realTargets = prioritizeTargets(realTargets);
+
+    for (ArrayList<Double> target : realTargets) {
+      if (canIShot(target.get(1), target.get(2))) {
+        targetX = target.get(1);
+        targetY = target.get(2);
+
+        // Adjust firing strategy based on distance and target type
+        double targetDist = distance(positionX, positionY, targetX, targetY);
+
+        if (targetDist > Parameters.teamBSecondaryBotFrontalDetectionRange + 100) {
+          currentState = STANDINGFIRINGTASK;
+        } else if (targetDist < HIGH_THREAT_DISTANCE && target.get(0) == MAIN) {
+          // For close main bots, use more aggressive firing
+          currentState = BACKWARDFIRINGTASK;
         } else {
-            angle = Math.PI + Math.atan((y - myY) / (x - myX));
+          currentState = BACKWARDFIRINGTASK;
         }
-        fire(angle);
+        return;
+      }
     }
-}
-  
-  private boolean onTheWay(double angle) {
-    double targetAngle;
-    if (myX <= targetX) {
-      targetAngle = Math.atan((targetY - myY) / (targetX - myX));
-    } else {
-      targetAngle = Math.PI + Math.atan((targetY - myY) / (targetX - myX));
-    }
-    return isRoughlySameDirection(angle, targetAngle);
+    firingEnabled = false;
   }
-  
-  private int determineTeam() {
+
+  private void firePosition(double x, double y) {
+    if (positionX <= x)
+      fire(Math.atan((y - positionY) / (double) (x - positionX)));
+    else
+      fire(Math.PI + Math.atan((y - positionY) / (double) (x - positionX)));
+    return;
+  }
+
+  private boolean canIShot(double x, double y) {
+    // y = a*x+b is the line between the robot and the target
+    double a = (y - positionY) / (x - positionX);
+    double b = positionY - a * positionX;
+    for (ArrayList<Double> ally : teammates.values()) {
+      if (distance(positionX, positionY, ally.get(0), ally.get(1)) <= DISTANCEPRECISION) {
+        continue; // this ally is this robot
+      }
+      double angleToAlly = getDirectionToTarget(ally.get(0), ally.get(1));
+      double angleToTarget = getDirectionToTarget(x, y);
+      if (Math.abs(angleToAlly - angleToTarget) < Math.PI / 12.0
+          && distance(positionX, positionY, ally.get(0), ally.get(1)) < distance(positionX, positionY, x, y)) {
+        return false;
+      }
+
+      if (getHeading() == Parameters.EAST) {
+        if (Math.abs(ally.get(1) - positionY) < 15 && ally.get(0) > positionX) {
+          return false;
+        }
+      }
+      if (getHeading() == Parameters.WEST) {
+        if (Math.abs(ally.get(1) - positionY) < 15 && ally.get(0) < positionX) {
+          return false;
+        }
+      }
+      if (getHeading() == Parameters.SOUTH) {
+        if (Math.abs(ally.get(0) - positionX) < 15 && ally.get(0) > positionX) {
+          return false;
+        }
+      }
+      if (getHeading() == Parameters.NORTH) {
+        if (Math.abs(ally.get(0) - positionX) < 15 && ally.get(0) < positionX) {
+          return false;
+        }
+      }
+
+      double allyA = Math.tan(ally.get(2));
+      double allyB = ally.get(1) - allyA * ally.get(0);
+      double allyX = (b - allyB) / (allyA - a);
+      double allyY = a * allyX + b;
+      if (distance(ally.get(0), ally.get(1), allyX, allyY) <= SAMELINEPRECISION &&
+          (x >= allyX && allyX >= positionX || x <= allyX && allyX <= positionX) &&
+          (y >= allyY && allyY >= positionY || y <= allyY && allyY <= positionY)) {
+        return false;
+      }
+    }
+    if (detectFront().getObjectType() == IFrontSensorResult.Types.TeamMainBot
+        || detectFront().getObjectType() == IFrontSensorResult.Types.TeamSecondaryBot)
+      return false;
+    return true;
+  }
+
+  private double distance(double x1, double y1, double x2, double y2) {
+    return Math.sqrt((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+  }
+
+  private void realCoords() {
+    positionX = positionX < 0 ? 0 : positionX;
+    positionX = positionX > 3000 ? 3000 : positionX;
+    positionY = positionY < 0 ? 0 : positionY;
+    positionY = positionY > 2000 ? 2000 : positionY;
+  }
+
+  private boolean canFireLatency() {
+    return cooldownCounter == 0;
+
+  }
+
+  private boolean isHeading(double dir) {
+    return Math.abs(Math.sin(getHeading() - dir)) < ANGLEPRECISIONBIS;
+  }
+
+  private double getDirectionToTarget(double x, double y) {
+    double dir = Math.atan2(y - positionY, x - positionX);
+    return normalizeRadian(dir);
+  }
+
+  private boolean determineTeam() {
     if (isSameDirection(getHeading(), Parameters.EAST)) {
-      return TEAM_A;
+      return true;
     }
-    return TEAM_B;
+    return false;
   }
-  
+
+  // New method to assess threat level of enemy
+  private int assessThreat(IRadarResult enemy) {
+    if (enemy.getObjectDistance() < HIGH_THREAT_DISTANCE) {
+      return HIGH_PRIORITY;
+    } else if (enemy.getObjectDistance() < MEDIUM_THREAT_DISTANCE) {
+      return MEDIUM_PRIORITY;
+    } else {
+      return LOW_PRIORITY;
+    }
+  }
+
+  // Improved target prioritization
+  private ArrayList<ArrayList<Double>> prioritizeTargets(ArrayList<ArrayList<Double>> allTargets) {
+    ArrayList<ArrayList<Double>> result = new ArrayList<>(allTargets);
+
+    result.sort(new Comparator<ArrayList<Double>>() {
+      @Override
+      public int compare(ArrayList<Double> t1, ArrayList<Double> t2) {
+        // Priority 1: Target type (Main bots are higher priority)
+        if (t1.get(0) != t2.get(0)) {
+          return t1.get(0) == MAIN ? -1 : 1;
+        }
+
+        // Priority 2: Threat level (if available - index 3)
+        if (t1.size() > 3 && t2.size() > 3 && !t1.get(3).equals(t2.get(3))) {
+          return t2.get(3).compareTo(t1.get(3)); // Higher threat first
+        }
+
+        // Priority 3: Distance (closer targets first)
+        double dist1 = distance(positionX, positionY, t1.get(1), t1.get(2));
+        double dist2 = distance(positionX, positionY, t2.get(1), t2.get(2));
+
+        // Check if target is the one we've been tracking
+        boolean isCurrentTarget1 = (Math.abs(t1.get(1) - lastTargetX) < 50 &&
+            Math.abs(t1.get(2) - lastTargetY) < 50);
+        boolean isCurrentTarget2 = (Math.abs(t2.get(1) - lastTargetX) < 50 &&
+            Math.abs(t2.get(2) - lastTargetY) < 50);
+
+        // Priority 4: Target persistence (prefer continuing to track same target)
+        if (isCurrentTarget1 && !isCurrentTarget2) {
+          return -1;
+        } else if (!isCurrentTarget1 && isCurrentTarget2) {
+          return 1;
+        }
+
+        // Default to distance comparison
+        return Double.compare(dist1, dist2);
+      }
+    });
+
+    // Update target tracking info if we have targets
+    if (!result.isEmpty()) {
+      double tx = result.get(0).get(1);
+      double ty = result.get(0).get(2);
+
+      // Check if we're still tracking the same target
+      if (Math.abs(tx - lastTargetX) < 50 && Math.abs(ty - lastTargetY) < 50) {
+        targetLockCount++;
+      } else {
+        targetLockCount = 0;
+      }
+
+      lastTargetX = tx;
+      lastTargetY = ty;
+    }
+
+    return result;
+  }
+
+  // Enhanced method for detecting if path to target is blocked
+  private boolean isPathClear(double targetX, double targetY) {
+    double angleToTarget = getDirectionToTarget(targetX, targetY);
+    double distToTarget = distance(positionX, positionY, targetX, targetY);
+
+    for (IRadarResult o : detectRadar()) {
+      if (o.getObjectType() != Types.BULLET) {
+        double objectAngle = o.getObjectDirection();
+        double angleDiff = Math.abs(normalizeRadian(objectAngle - angleToTarget));
+
+        if (angleDiff < 0.2 && o.getObjectDistance() < distToTarget) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  // Improved hunting behavior with smarter path selection
+  private void huntTarget(double targetX, double targetY) {
+    if (isPathClear(targetX, targetY)) {
+      // Direct path is clear, move towards target
+      double angleToTarget = getDirectionToTarget(targetX, targetY);
+      if (Math.abs(myGetHeading() - angleToTarget) < 0.1) {
+        myMove();
+      } else {
+        // Turn towards target
+        if (normalizeRadian(angleToTarget - myGetHeading()) < Math.PI) {
+          stepTurn(Parameters.Direction.LEFT);
+        } else {
+          stepTurn(Parameters.Direction.RIGHT);
+        }
+      }
+    } else {
+      // Path is blocked, try to find alternate route
+      // Simple implementation - turn left and try again next step
+      stepTurn(Parameters.Direction.LEFT);
+    }
+  }
+
   // --- MÉTHODES DE FORMATION ---
   private double[] calculateFormationPosition(double centerX, double centerY, int robotId) {
     double[] position = new double[2];
-    if (myTeam == TEAM_A) {
+    if (myTeam) {
       if (robotId == BETA) {
         position[0] = centerX;
         position[1] = centerY;
@@ -991,732 +955,56 @@ private boolean isObstacleOnPath(double angle) {
         position[1] = centerY + (TRIANGLE_SIDE) * Math.sqrt(3) / 2;
       }
     }
-    
-    // Garder les positions à l'intérieur des limites de l'arène
-    position[0] = Math.min(Math.max(position[0], SAFETY_MARGIN), ARENA_WIDTH - SAFETY_MARGIN);
-    position[1] = Math.min(Math.max(position[1], SAFETY_MARGIN), ARENA_HEIGHT - SAFETY_MARGIN);
-    
     return position;
   }
-  
-  // --- MÉTHODES DE COMMUNICATION ---
-  private void sendMessage(int messageType, Object... data) {
-    StringBuilder message = new StringBuilder();
-    message.append(whoAmI).append(":").append(TEAM).append(":").append(messageType);
-    if (data != null) {
-      for (Object datum : data) {
-        message.append(":").append(datum);
-      }
-    }
-    message.append(":").append(OVER);
-    broadcast(message.toString());
-  }
-  
-  private void process(String message) {
-    String[] parts = message.split(":");
-    int messageType = Integer.parseInt(parts[2]);
-    
-    switch (messageType) {
-      case FIRE:
-        processFireMessage(parts);
-        break;
-      case ROGER:
-        processRogerMessage(parts);
-        break;
-      case DODGE:
-        processDodgeMessage(parts);
-        break;
-      case TARGET_CONSENSUS:
-        processTargetConsensusMessage(parts);
-        break;
-      default:
-        sendLogMessage("Unknown message type: " + messageType);
-        break;
-    }
-  }
-  
-  private void processFireMessage(String[] parts) {
-    fireOrder = true;
-    double newTargetX = Double.parseDouble(parts[3]);
-    double newTargetY = Double.parseDouble(parts[4]);
-    double distance = Double.MAX_VALUE;
-    IRadarResult.Types enemyType = null;
 
-    // Extract distance if available
-    if (parts.length > 5) {
-      try {
-        distance = Double.parseDouble(parts[5]);
-      } catch (NumberFormatException e) {
-        // Ignore if conversion fails
-      }
-    }
-    
-    // Extract enemy type if available (starting at index 6)
-    if (parts.length > 6) {
-      try {
-        int typeCode = Integer.parseInt(parts[6]);
-        if (typeCode == 1) {
-          enemyType = IRadarResult.Types.OpponentMainBot;
-        } else if (typeCode == 2) {
-          enemyType = IRadarResult.Types.OpponentSecondaryBot;
-        }
-      } catch (NumberFormatException e) {
-        // Ignore if conversion fails
-      }
-    }
-    
-    // Generate enemy ID and update tracker
-    int enemyId = getOrCreateEnemyId(newTargetX, newTargetY);
-    
-    // Check if we already have this enemy in our tracker
-    boolean isNewEnemy = !enemyTracker.containsKey(enemyId);
-    
-    // If it's a new enemy or an update to an existing one
-    if (isNewEnemy) {
-      enemyTracker.put(enemyId, new EnemyInfo(newTargetX, newTargetY, distance, enemyType));
-    } else {
-      // Update existing enemy
-      EnemyInfo existingEnemy = enemyTracker.get(enemyId);
-      existingEnemy.update(newTargetX, newTargetY, distance);
-      // Update type only if we didn't have it before or if we're getting a MainBot type
-      if (existingEnemy.type == null || 
-          (enemyType != null && enemyType == IRadarResult.Types.OpponentMainBot)) {
-        existingEnemy.type = enemyType;
-      }
-    }
-    
-    // Decide whether to switch targets based on priority
-    boolean shouldSwitchTarget = false;
-    
-    // If we don't have a target yet, take this one
-    if (targetEnemyId == -1) {
-      shouldSwitchTarget = true;
-    } 
-    // If this is a MainBot and our current target is not, switch
-    else if (enemyType == IRadarResult.Types.OpponentMainBot && 
-             enemyTracker.containsKey(targetEnemyId) &&
-             enemyTracker.get(targetEnemyId).type != IRadarResult.Types.OpponentMainBot) {
-      shouldSwitchTarget = true;
-    }
-    // If both are same type (or unknown), prefer the closer one
-    else if ((enemyType == null || 
-              enemyTracker.get(targetEnemyId).type == null ||
-              enemyType == enemyTracker.get(targetEnemyId).type) &&
-             distance < enemyTracker.get(targetEnemyId).distance) {
-      shouldSwitchTarget = true;
-    }
-    
-    if (shouldSwitchTarget) {
-      targetEnemyId = enemyId;
-      targetX = newTargetX;
-      targetY = newTargetY;
-    }
-  }
-  
-  private void processRogerMessage(String[] parts) {
-    int whoAreYou = Integer.parseInt(parts[0]);
-    boolean statusUpdate = parts.length > 3 ? Boolean.parseBoolean(parts[3]) : true;
-    
-    // Si le message indique que le robot est mort (statusUpdate = false)
-    if (!statusUpdate) {
-      if (whoAreYou == ALPHA) isAlphaAlive = false;
-      if (whoAreYou == BETA) isBetaAlive = false;
-      if (whoAreYou == GAMMA) isGammaAlive = false;
-      
-      teamMemberDied = true;
-      sendLogMessage("Team member " + whoAreYou + " died. Switching to hunt mode.");
-      return;
-    }
-    
-    // Traitement habituel des messages ROGER pour la formation
-    if (whoAreYou == ALPHA) readyAlpha = statusUpdate;
-    if (whoAreYou == BETA) readyBeta = statusUpdate;
-    if (whoAreYou == GAMMA) readyGamma = statusUpdate;
-  }
-  
-  private void processDodgeMessage(String[] parts) {
-    double obstacleX = Double.parseDouble(parts[3]);
-    double obstacleYtmp = Double.parseDouble(parts[4]);
-    double betaX = myX;
-    double betaY = myY + (Math.random() * 100 - 50) ;
-    
-    if (parts.length >= 7) {
-      betaX = Double.parseDouble(parts[5]);
-      betaY = Double.parseDouble(parts[6]);
-    } else if (whoAmI == BETA) {
-      sendMessage(DODGE, obstacleX, obstacleYtmp, betaX, betaY);
-    } else {
-      return;
-    }
-    
-    // double obstacleY = obstacleYtmp < betaY ? obstacleYtmp + (500) : obstacleYtmp - (500);
-    // double[] pos = calculateFormationPosition(obstacleX, obstacleYtmp, whoAmI);
-    // formationX = pos[0];
-    // formationY = pos[1];
-    if (alive)
-    state = DODGE;
-  }
-  
-  private void processTargetConsensusMessage(String[] parts) {
-    // Extraire l'ID de la cible proposée
-    int proposedTargetId = Integer.parseInt(parts[3]);
-    
-    // Si cette cible existe dans notre tracker
-    if (enemyTracker.containsKey(proposedTargetId)) {
-      // Mettre à jour le compteur de votes pour cette cible
-      targetVotes.put(proposedTargetId, targetVotes.getOrDefault(proposedTargetId, 0) + 1);
-    }
-    
-    // Si c'est une nouvelle cible que nous ne connaissons pas encore
-    else if (parts.length > 4) {
-      // Essayer d'extraire les coordonnées si elles sont disponibles dans le message
-      try {
-        double enemyX = Double.parseDouble(parts[4]);
-        double enemyY = Double.parseDouble(parts[5]);
-        
-        // Créer une entrée temporaire dans notre tracker
-        enemyTracker.put(proposedTargetId, new EnemyInfo(enemyX, enemyY, 1000, null));
-        
-        // Ajouter un vote pour cette cible
-        targetVotes.put(proposedTargetId, targetVotes.getOrDefault(proposedTargetId, 0) + 1);
-      } catch (Exception e) {
-        // Ignorer si les coordonnées ne sont pas valides
-      }
-    }
-  }
-  
-  private void processIncomingMessages() {
-    ArrayList<String> messages = fetchAllMessages();
-    receivedMessages.clear();
-    for (String m : messages) {
-      String[] parts = m.split(":");
-      if (Integer.parseInt(parts[1]) == whoAmI || Integer.parseInt(parts[1]) == TEAM) {
-        receivedMessages.add(m);
-        process(m);
-      }
-    }
-  }
-  
-  private boolean checkTeamCollision() {
-    double targetAngle = Math.atan2(targetY - myY, targetX - myX);
-    
-    for (IRadarResult o : detectRadar()) {
-        if ((o.getObjectType() == IRadarResult.Types.TeamMainBot ||
-            o.getObjectType() == IRadarResult.Types.TeamSecondaryBot) &&
-            o.getObjectDistance() <= 150) {
-            
-            // Vérifier si le coéquipier est dans la direction de notre mouvement
-            double angleDiff = Math.abs(normalizeAngleDifference(o.getObjectDirection() - targetAngle));
-            if (angleDiff < Math.PI/4) { // Tolérance de 45 degrés
-                return true;
-            }
-        }
-    }
-    return false;
-}
-  
-  // --- MÉTHODES D'ODOMÉTRIE ET DE DÉTECTION DE COLLISION ---
-  private void updateOdometry() {
-    boolean collision = detectCollision(COLLISION_THRESHOLD);
-    if (isMoving) {
-      updatePosition(Parameters.teamAMainBotSpeed, collision);
-      isMoving = false;
-    } else if (isMovingBack) {
-      updatePosition(-Parameters.teamAMainBotSpeed, collision);
-      isMovingBack = false;
-    }
-    
-    // Affiner la position avec les données du radar
-    refinePositionWithRadar();
-  }
-  
-  private void updatePosition(double speed, boolean collision) {
-    if (!collision) {
-      // Calculer le temps écoulé depuis la dernière mise à jour
-      long currentTime = System.currentTimeMillis();
-      double deltaTime = (currentTime - lastUpdateTime) / 1000.0; // Convertir en secondes
-      if (deltaTime <= 0) deltaTime = 0.01; // Éviter la division par zéro
-      lastUpdateTime = currentTime;
-      
-      // Calculer la nouvelle position basée sur la direction et la vitesse
-      double newX = myX + speed * Math.cos(getHeading());
-      double newY = myY + speed * Math.sin(getHeading());
-      
-      // Calculer la vitesse instantanée
-      double instantVelocityX = (newX - myX) / deltaTime;
-      double instantVelocityY = (newY - myY) / deltaTime;
-      
-      // Mettre à jour la vitesse estimée avec un facteur de lissage
-      double alpha = 0.3; // Facteur de lissage pour la vitesse (0.3 = 30% nouvelle mesure + 70% estimation précédente)
-      velocityX = alpha * instantVelocityX + (1 - alpha) * velocityX;
-      velocityY = alpha * instantVelocityY + (1 - alpha) * velocityY;
-      
-      // Prédire la position avec le modèle de vitesse
-      double predictedX = estimatedX + velocityX * deltaTime;
-      double predictedY = estimatedY + velocityY * deltaTime;
-      
-      // Mettre à jour avec le filtre de Kalman, en donnant plus de poids à la mesure directe
-      double measurementWeight = 0.7; // Augmenter l'influence de la mesure directe
-      estimatedX = kalmanFilter(predictedX, newX, uncertaintyX, true);
-      estimatedY = kalmanFilter(predictedY, newY, uncertaintyY, false);
-      
-      // Utiliser l'estimation comme position actuelle
-      myX = estimatedX;
-      myY = estimatedY;
-      
-      // Debug - afficher les vitesses
-      if (speed != 0) {
-        sendLogMessage("Vitesse: vX=" + Math.round(velocityX) + ", vY=" + Math.round(velocityY));
-      }
-    } else if (speed < 0) {
-      sendLogMessage("Collision détectée - position non mise à jour");
-      // En cas de collision, réinitialiser la vitesse estimée
-      velocityX = 0;
-      velocityY = 0;
-    }
-  }
-  
-  /**
-   * Implémentation du filtre de Kalman avec pondération ajustable.
-   * @param predicted Valeur prédite par le modèle de vitesse
-   * @param measured Valeur mesurée actuelle
-   * @param uncertainty Incertitude actuelle sur l'estimation
-   * @param isXAxis Indique si l'axe est X (true) ou Y (false)
-   * @return Nouvelle estimation filtrée
-   */
-  private double kalmanFilter(double predicted, double measured, double uncertainty, boolean isXAxis) {
-    // Calculer le gain de Kalman standard
-    double kalmanGain = uncertainty / (uncertainty + SENSOR_NOISE);
-    
-    // Ajuster le gain avec le poids spécifié pour la mesure
-    double measurementWeight = 0.7; // Influence de la mesure directe
-    kalmanGain = (1 - measurementWeight) * kalmanGain + measurementWeight;
-    
-    // Mise à jour de l'estimation
-    double newEstimated = predicted + kalmanGain * (measured - predicted);
-    
-    // Mise à jour de l'incertitude
-    double newUncertainty = (1 - kalmanGain) * uncertainty + PROCESS_NOISE;
-    
-    // Mettre à jour la variable d'incertitude correspondante
-    if (isXAxis) {
-        uncertaintyX = newUncertainty;
-    } else {
-        uncertaintyY = newUncertainty;
-    }
-    
-    return newEstimated;
-}
-  
-  private void refinePositionWithRadar() {
-    for (IRadarResult o : detectRadar()) {
-        if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 400) {
-            // Obtenir la position du wreck dans le référentiel global
-            double wreckX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-            double wreckY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-            
-            // Utiliser cette information comme point d'ancrage pour ajuster notre position
-            // au lieu de recalculer une position redondante
-            estimatedX = kalmanFilter(estimatedX, myX, uncertaintyX * 1.5, true);
-            estimatedY = kalmanFilter(estimatedY, myY, uncertaintyY * 1.5, false);
-            
-            myX = estimatedX;
-            myY = estimatedY;
-            break;
-        }
-    }
-}
-  
-  // --- MÉTHODES DE DÉBOGAGE ---
-  private void logDebugMessages() {
-    boolean debug = true;
-    if (!debug || state == SINK) return;
-    
-    String prefix = "";
-    if (whoAmI == ALPHA) prefix = "ALPHA";
-    else if (whoAmI == BETA) prefix = "#BETA";
-    else if (whoAmI == GAMMA) prefix = "#GAMMA";
-    
-    String stateStr;
-    switch (state) {
-      case TRIANGLE_FORMATION: stateStr = "FORMATION"; break;
-      case FINAL_ORIENTATION: stateStr = "ORIENT"; break;
-      case MOVETASK: stateStr = "MOVE"; break;
-      case DODGE: stateStr = "DODGE"; break;
-      case HUNT_MODE: stateStr = "HUNT"; break;
-      default: stateStr = ""+state;
-    }
-    
-    sendLogMessage(prefix + " State=" + stateStr + 
-                  " current=(" + (int) myX + ", " + (int) myY + 
-                  "), teamDead=" + teamMemberDied +
-                  ", target=" + (targetEnemyId != -1 ? "YES" : "NO"));
-  }
-
-  /**
-   * Vérifie si un ennemi est détecté par le radar.
-   * @return true si un ennemi est détecté, false sinon.
-   */
-  private boolean checkEnnemie() {
-    for (IRadarResult o : detectRadar()) {
-      if (isEnemyBot(o.getObjectType())) {
-        double distance = o.getObjectDistance();
-        if (distance < ENEMY_DETECTION_THRESHOLD) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-  
-  private boolean detectCollision(double distance) {    
-    for (IRadarResult o : detectRadar()) {
-      if (o.getObjectDistance() < distance && 
-          o.getObjectType() != IRadarResult.Types.BULLET) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // Remplacer la génération d'ID dans handleRadarDetection:
-  private int getOrCreateEnemyId(double enemyX, double enemyY) {
-    // Chercher un ennemi existant à proximité
-    for (Map.Entry<Integer, double[]> entry : enemyPositions.entrySet()) {
-        double[] pos = entry.getValue();
-        double distance = Math.hypot(pos[0] - enemyX, pos[1] - enemyY);
-        if (distance < 50) { // 50 est un seuil de distance raisonnable
-            // Mettre à jour la position
-            pos[0] = enemyX;
-            pos[1] = enemyY;
-            return entry.getKey();
-        }
-    }
-    
-    // Nouvel ennemi détecté
-    int newId = nextEnemyId++;
-    enemyPositions.put(newId, new double[]{enemyX, enemyY});
-    return newId;
-  }
-
-  private void selectTarget() {
-    long currentTime = System.currentTimeMillis();
-    
-    // Force target change if we've been focusing the same target too long
-    boolean forceChange = (targetEnemyId != -1) && 
-                         (currentTime - currentTargetStartTime > TARGET_MAX_FOCUS_TIME);
-    
-    // Si forceChange est true ou si la cible persistante n'est plus valide, on choisit une nouvelle cible
-    if (forceChange || 
-        persistentTargetId == -1 || 
-        !enemyTracker.containsKey(persistentTargetId) ||
-        currentTime - enemyTracker.get(persistentTargetId).lastSeen > TARGET_PERSISTENCE_TIME) {
-        
-        int bestTargetId = -1;
-        double bestScore = 0;
-        
-        for (Map.Entry<Integer, EnemyInfo> entry : enemyTracker.entrySet()) {
-            int enemyId = entry.getKey();
-            EnemyInfo enemy = entry.getValue();
-            
-            // Skip current target if forcing change
-            if (forceChange && enemyId == targetEnemyId) {
-                continue;
-            }
-            
-            double distance = enemy.distance;
-            long timeSinceLastSeen = currentTime - enemy.lastSeen;
-            
-            // Score calculation - prioritize:
-            // 1. Recently seen enemies (fresher data)
-            // 2. MainBots over SecondaryBots
-            // 3. Closer enemies over distant ones
-            double freshnessScore = Math.max(0, 1.0 - (timeSinceLastSeen / (double)TARGET_PERSISTENCE_TIME));
-            double typeScore = (enemy.type == IRadarResult.Types.OpponentMainBot) ? 2.0 : 1.0;
-            double distanceScore = 1000.0 / Math.max(distance, 100.0); // Avoid division by very small numbers
-            
-            double score = freshnessScore * typeScore * distanceScore;
-            
-            if (score > bestScore) {
-                bestScore = score;
-                bestTargetId = enemyId;
-            }
-        }
-        
-        if (bestTargetId != -1 && (bestTargetId != targetEnemyId || forceChange)) {
-            persistentTargetId = bestTargetId;
-            targetEnemyId = bestTargetId;
-            currentTargetStartTime = currentTime; // Reset the timer when changing targets
-            
-            EnemyInfo target = enemyTracker.get(targetEnemyId);
-            sendLogMessage("Target changed to: " + target.type + 
-                          " at (" + (int)target.x + "," + (int)target.y + 
-                          "), reason: " + (forceChange ? "timeout" : "better target"));
-        }
-    }
-}
-
-private double[] calculateInterceptionPoint(EnemyInfo target) {
-    // Calculer la vitesse et direction de la cible
-    double targetVelX = target.x - target.lastX;
-    double targetVelY = target.y - target.lastY;
-    
-    // Déterminer si la cible se déplace significativement
-    boolean targetMoving = Math.hypot(targetVelX, targetVelY) > 1.0;
-    
-    if (!targetMoving) {
-        // Si la cible est immobile, viser directement dessus
-        return new double[] { target.x, target.y };
-    }
-    
-    // Temps depuis la dernière mise à jour
-    long timeDelta = System.currentTimeMillis() - target.lastSeen;
-    
-    // Notre vitesse maximale (estimation)
-    double mySpeed = Parameters.teamAMainBotSpeed;
-    
-    // Vitesse de l'ennemi
-    double enemySpeed = Math.hypot(targetVelX, targetVelY);
-    
-    // Position prédite avec le temps (prédiction linéaire simple)
-    double predictedX = target.x + targetVelX * 5; // 5 étapes d'anticipation
-    double predictedY = target.y + targetVelY * 5;
-    
-    // Si nous sommes plus rapides, calculer un point d'interception
-    if (mySpeed > enemySpeed) {
-        // Calculer un point entre notre position et la position prédite
-        // qui favorise l'interception par devant
-        double factor = 0.7; // 0.5 = milieu, >0.5 = plus proche de la cible
-        double interceptX = myX + (predictedX - myX) * factor;
-        double interceptY = myY + (predictedY - myY) * factor;
-        
-        return new double[] { interceptX, interceptY };
-    } else {
-        // Si l'ennemi est plus rapide, viser là où il sera
-        return new double[] { predictedX, predictedY };
-    }
-}
-
-private void moveToCoordinatesAggressive(double targetX, double targetY) {
-    // Version plus directe de moveToCoordinates avec moins d'évitement
-    
-    double dx = targetX - myX;
-    double dy = targetY - myY;
+  // --- MÉTHODES DE DÉPLACEMENT ---
+  private void moveToCoordinates(double targetX, double targetY) {
+    // Pas d'obstacle imminent, continuer vers la cible
+    double dx = targetX - positionX;
+    double dy = targetY - positionY;
     double distance = Math.hypot(dx, dy);
-    
-    // Direction vers la cible
+
+    if (distance < 30) {
+      return; // Destination atteinte
+    }
+
     double angleToTarget = normalizeHeading(Math.atan2(dy, dx));
-    
-    // Vérifier les obstacles critiques uniquement (très proches)
-    for (IRadarResult o : detectRadar()) {
-        if (o.getObjectType() != IRadarResult.Types.BULLET && 
-            o.getObjectDistance() < COLLISION_THRESHOLD * 0.6) {
-            
-            // Seulement éviter les obstacles directement sur le chemin
-            double angleDiff = Math.abs(normalizeAngleDifference(o.getObjectDirection() - angleToTarget));
-            
-            if (angleDiff < Math.PI/6) { // 30 degrés de tolérance seulement
-                // Obstacle critique directement devant - appliquer évitement minimal
-                double perpendicular = normalizeHeading(o.getObjectDirection() + Math.PI/2);
-                double alt1 = perpendicular;
-                double alt2 = normalizeHeading(perpendicular + Math.PI);
-                
-                // Choisir la direction qui nous rapproche le plus de la cible
-                double diff1 = Math.abs(normalizeAngleDifference(alt1 - angleToTarget));
-                double diff2 = Math.abs(normalizeAngleDifference(alt2 - angleToTarget));
-                
-                angleToTarget = (diff1 < diff2) ? alt1 : alt2;
-                break;
-            }
-        }
-    }
-    
-    // Se tourner et avancer dans la direction calculée
     turnAndMove(angleToTarget);
-}
-
-private double[] calculateFlankingPosition(double targetX, double targetY) {
-    // Angle de base vers la cible
-    double baseAngle = Math.atan2(targetY - myY, targetX - myX);
-    
-    // Décalage en fonction de l'identité du robot
-    double offsetAngle = 0;
-    if (whoAmI == ALPHA) offsetAngle = Math.PI / 4; // +45 degrés
-    else if (whoAmI == GAMMA) offsetAngle = -Math.PI / 4; // -45 degrés
-    // BETA attaque frontalement (offset = 0)
-    
-    // Calculer la position décalée à une certaine distance
-    double flankDistance = 200; // Distance de flanquement
-    double flankX = targetX - flankDistance * Math.cos(baseAngle + offsetAngle);
-    double flankY = targetY - flankDistance * Math.sin(baseAngle + offsetAngle);
-    
-    return new double[] { flankX, flankY };
-}
-
-/**
- * Vérifie s'il y a un obstacle entre le robot et la cible
- * @param targetX Coordonnée X de la cible
- * @param targetY Coordonnée Y de la cible
- * @return true si la voie est libre, false si un obstacle est détecté
- */
-private boolean isLineOfFireClear(double targetX, double targetY) {
-    // Calculer l'angle et la distance à la cible
-    double angle = Math.atan2(targetY - myY, targetX - myX);
-    double distance = Math.hypot(targetX - myX, targetY - myY);
-    
-    // Vérifier tous les objets détectés par le radar
-    for (IRadarResult o : detectRadar()) {
-        // Ignorer les balles mais PAS les alliés
-        if (o.getObjectType() == IRadarResult.Types.BULLET) {
-            continue;
-        }
-        
-        // Si c'est un allié, utiliser une tolérance d'angle plus large pour éviter tout risque
-        boolean isTeammate = (o.getObjectType() == IRadarResult.Types.TeamMainBot || 
-                             o.getObjectType() == IRadarResult.Types.TeamSecondaryBot);
-        
-        // Plus grande tolérance d'angle pour les coéquipiers (évite les tirs amis)
-        double angleTolerance;
-        if (isTeammate) {
-            angleTolerance = 0.5; // ~30 degrés de marge pour les coéquipiers
-        } else if (isEnemyBot(o.getObjectType())) {
-            continue; // On veut tirer sur les ennemis, donc ils ne bloquent pas la ligne de tir
-        } else {
-            // Pour les autres obstacles (wreck, etc.)
-            angleTolerance = 0.2 * (1.0 - o.getObjectDistance() / distance);
-            angleTolerance = Math.max(0.05, Math.min(0.3, angleTolerance));
-        }
-        
-        // Calculer l'écart d'angle entre l'objet et la direction de tir
-        double angleDiff = Math.abs(normalizeAngleDifference(o.getObjectDirection() - angle));
-        
-        // Est-ce que l'objet est entre nous et la cible?
-        if (angleDiff < angleTolerance && o.getObjectDistance() < distance) {
-            if (isTeammate) {
-                sendLogMessage("Tir annulé - coéquipier dans la ligne de tir");
-            }
-            return false;
-        }
-    }
-    
-    return true;
-}
-
-/**
- * Vérifie si un ennemi est à portée de tir immédiat et tire dessus
- * @return true si un tir a été effectué, false sinon
- */
-private boolean fireAtNearbyEnemy() {
-  // Si le cooldown de tir n'est pas terminé, ne pas tirer
-  if (fireRythm > 0) return false;
-  
-  IRadarResult closestEnemy = null;
-  double minDistance = IMMEDIATE_FIRING_THRESHOLD;
-  
-  // Rechercher l'ennemi le plus proche à portée de tir
-  for (IRadarResult o : detectRadar()) {
-    if (isEnemyBot(o.getObjectType()) && o.getObjectDistance() < minDistance) {
-      // Ne tirer que si l'ennemi est devant nous (dans un angle de ±60°)
-      double angleDiff = Math.abs(normalizeAngleDifference(o.getObjectDirection() - getHeading()));
-      if (angleDiff < Math.PI/3) { // 60 degrés dans chaque direction
-        minDistance = o.getObjectDistance();
-        closestEnemy = o;
-      }
-    }
   }
-  
-  // Si un ennemi proche a été trouvé
-  if (closestEnemy != null) {
-    // Vérifier si la ligne de tir est dégagée
-    double enemyX = myX + closestEnemy.getObjectDistance() * Math.cos(closestEnemy.getObjectDirection());
-    double enemyY = myY + closestEnemy.getObjectDistance() * Math.sin(closestEnemy.getObjectDirection());
-    
-    if (isLineOfFireClear(enemyX, enemyY)) {
-      // Tirer directement sur l'ennemi
-      fire(closestEnemy.getObjectDirection());
-      fireRythm = FIRE_COOLDOWN; // Réinitialiser le cooldown
-      
-      // Enregistrer cet ennemi dans le tracker
-      int enemyId = getOrCreateEnemyId(enemyX, enemyY);
-      if (enemyTracker.containsKey(enemyId)) {
-        enemyTracker.get(enemyId).update(enemyX, enemyY, closestEnemy.getObjectDistance());
-        enemyTracker.get(enemyId).type = closestEnemy.getObjectType();
+
+  private double normalizeHeading(double angle) {
+    while (angle > Math.PI)
+      angle -= 2 * Math.PI;
+    while (angle < -Math.PI)
+      angle += 2 * Math.PI;
+    return angle; // Retourne l'angle signé, pas sa valeur absolue
+  }
+
+  private double normalizeAngleDifference(double diff) {
+    while (diff > Math.PI)
+      diff -= 2 * Math.PI;
+    while (diff < -Math.PI)
+      diff += 2 * Math.PI;
+    return diff; // Retourne la différence signée, pas sa valeur absolue
+  }
+
+  private void turnAndMove(double desiredAngle) {
+    double angleDiff = normalizeAngleDifference(desiredAngle - getHeading());
+
+    if (Math.abs(angleDiff) > Math.PI / 2) {
+      double oppositeAngle = normalizeHeading(desiredAngle + Math.PI);
+      double newDiff = normalizeAngleDifference(oppositeAngle - getHeading());
+
+      if (Math.abs(newDiff) > ANGLE_PRECISION) {
+        stepTurn(newDiff > 0 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
       } else {
-        enemyTracker.put(enemyId, new EnemyInfo(enemyX, enemyY, closestEnemy.getObjectDistance(), closestEnemy.getObjectType()));
+        myMoveBack();
       }
-      
-      // Partager cette information avec l'équipe
-      sendMessage(FIRE, enemyX, enemyY, closestEnemy.getObjectDistance(), 
-                closestEnemy.getObjectType() == IRadarResult.Types.OpponentMainBot ? 1 : 2);
-      
-      sendLogMessage("Tir immédiat sur ennemi à " + (int)closestEnemy.getObjectDistance() + " unités");
-      return true;
+    } else if (Math.abs(angleDiff) > ANGLE_PRECISION) {
+      stepTurn(angleDiff > 0 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
+    } else {
+      myMove();
     }
   }
-  
-  return false;
-}
-
-/**
- * Partage périodiquement la cible préférée de ce robot avec le reste de l'équipe
- */
-private void sharePreferedTarget() {
-  long currentTime = System.currentTimeMillis();
-  
-  // Vérifier si c'est le moment de diffuser notre cible
-  if (currentTime - lastTargetBroadcastTime > TARGET_BROADCAST_INTERVAL && targetEnemyId != -1) {
-    // Envoyer notre préférence de cible à l'équipe
-    sendMessage(TARGET_CONSENSUS, targetEnemyId);
-    lastTargetBroadcastTime = currentTime;
-    
-    // Debug
-    if (teamConsensusTargetId != -1) {
-      sendLogMessage("Ma cible: " + targetEnemyId + ", Consensus équipe: " + teamConsensusTargetId);
-    }
-  }
-}
-
-/**
- * Met à jour la cible consensuelle de l'équipe en fonction des votes
- */
-private void updateTeamConsensusTarget() {
-  // Si nous n'avons pas de votes, garder la cible actuelle
-  if (targetVotes.isEmpty()) {
-    return;
-  }
-  
-  // Trouver la cible avec le plus de votes
-  int maxVotes = 0;
-  int mostVotedTarget = -1;
-  
-  for (Map.Entry<Integer, Integer> entry : targetVotes.entrySet()) {
-    if (entry.getValue() > maxVotes) {
-      maxVotes = entry.getValue();
-      mostVotedTarget = entry.getKey();
-    }
-  }
-  
-  // Si nous avons une cible avec suffisamment de votes (au moins 2)
-  if (maxVotes >= 2) {
-    teamConsensusTargetId = mostVotedTarget;
-    
-    // Si notre cible actuelle n'est pas celle du consensus et que le consensus est valide
-    if (targetEnemyId != teamConsensusTargetId && enemyTracker.containsKey(teamConsensusTargetId)) {
-      // Adopter la cible consensuelle
-      targetEnemyId = teamConsensusTargetId;
-      
-      EnemyInfo target = enemyTracker.get(targetEnemyId);
-      targetX = target.x;
-      targetY = target.y;
-      
-      sendLogMessage("Adoption de la cible consensuelle: " + targetEnemyId);
-    }
-  }
-  
-  // Nettoyer les votes obsolètes (plus anciens que 3 secondes)
-  long currentTime = System.currentTimeMillis();
-  targetVotes.entrySet().removeIf(entry -> 
-      !enemyTracker.containsKey(entry.getKey()) || 
-      currentTime - enemyTracker.get(entry.getKey()).lastSeen > 3000);
-}
 }

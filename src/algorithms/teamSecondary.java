@@ -8,543 +8,572 @@ package algorithms;
 
 import robotsimulator.Brain;
 import characteristics.Parameters;
+import characteristics.IRadarResult.Types;
+import characteristics.Parameters.Direction;
 import characteristics.IFrontSensorResult;
 import characteristics.IRadarResult;
 
 import java.util.ArrayList;
+import java.util.HashMap;
+
 
 public class teamSecondary extends Brain {
-  // ---PARAMETERS---//
-  private static final double ANGLEPRECISION = 0.03;
-  private static final double COLLISION_THRESHOLD = 300;
-  private static final double ARENA_WIDTH = 3000;
-  private static final double ARENA_HEIGHT = 2000;
-  private static final double SAFETY_MARGIN = 100.0;
+	
+	/*************************   IMPORTANT   ******************************/
+	/** Modifier cette variable en fonction du côté qui nous est attribué **/
+	  	// - à gauche => true
+		// - à droite => false
 
-  private static final int ROCKY = 0x1EADDA;
-  private static final int MARIO = 0x5EC0;
+	/*********************************************************************/
+	
+
+  //---PARAMETERS---//
+  private static final double ANGLEPRECISION = 0.001;
+  private static final double ANGLEPRECISIONBIS = 0.03;
+
+
+  private static final double MAIN = 0xAAAAFFFF;
+  private static final double SECONDARY = 0xFFFFAAAA;
+
+  private static final int ROCKY = 0x1EBDDB;
+  private static final int MARIO = 0x5ECD;
+  private static final int ALPHA = 0x1EADDA;
+  private static final int BETA = 0x5EC0;
+  private static final int GAMMA = 0x333;
   private static final int TEAM = 0xBADDAD;
-  private static final int UNDEFINED = 0xBADC0DE0;
 
   private static final int FIRE = 0xB52;
-  private static final int FALLBACK = 0xFA11BAC;
-  private static final int ROGER = 0x0C0C0C0C;
-  private static final int COMBAT = 0xB52B52;
+  private static final int POSITION = 0x7E57;
   private static final int OVER = 0xC00010FF;
-  private static final int FOCUSING = 0xF0C05; // New message type for focus notification
-  
-  // ---Tâches---//
-  // ---Position initiale de l'équipe---//
-  private static final int TURNLEFTTASKINIT1 = 1;
-  private static final int TURNRIGHTTASKINIT1 = 2;
-  private static final int TURNLEFTTASKINIT2 = 3;
-  private static final int TURNRIGHTTASKINIT2 = 4;
 
+  private static final int TURNNORTHTASK = 1;
+  private static final int TURNSOUTHTASK = 2;
+  private static final int TURNEASTTASK = 3;
+  private static final int TURNWESTTASK = 4;
   private static final int MOVETASK = 5;
-  private static final int FOLLOWTASK = 6;
+  private static final int FIRSTMOVETASK = 6;
   private static final int FLEE = 7;
-  private static final int SINK =  0xBADC0DE1;
+  private static final int TURNLEFTTASK = 8;
+  private static final int MOVEBACKTASK = 9;
+  private static final int TURNRIGHTTASK = 10;
+  private static final int FIRSTTURNNORTHTASK = 11;
+  private static final int FIRSTTURNSOUTHTASK = 22;
+  private static final int SINK = 0xBADC0DE1;
 
-  private static final int TEAM_A = 0;
-  private static final int TEAM_B = 1;
-
-  private static final double SENSOR_NOISE = 2.0;
-  private static final double PROCESS_NOISE = 3.0;
-
-  // ---VARIABLES---//
+  private boolean myTeam;
+  //---VARIABLES---//
   private int state;
-  private double oldAngle;
-  private double myX, myY;
+  private double myX,myY;
   private boolean isMoving;
-  private boolean isMovingBack;
   private int whoAmI;
-  private int myTeam; // Pour stocker l'équipe du robot
-  private ArrayList<String> receivedMessages; // Pour stocker les messages reçus
-  
-  // Variables for focus coordination
-  private int currentlyFocusedTarget = -1; // ID of enemy I'm focusing on
-  private ArrayList<Integer> targetsBeingFocused; // Enemies focused by teammates
-  private long lastFocusMessageTime = 0;
-  private static final long FOCUS_MESSAGE_INTERVAL = 1000; // Interval between focus messages (1 second)
-  private static final long FOCUS_TIMEOUT = 3000; // Timeout for focus data (3 seconds)
-  private ArrayList<Long> focusTimestamps; // When each focus was last updated
+  private HashMap<Integer, ArrayList<Double>> allies;
+  private ArrayList<IRadarResult> ennemies;
+  private double endTaskDirection;
+  private int stepNumber, stepNumberMoveBack;
+  private boolean isMovingBack;
 
-  private double estimatedX, estimatedY;
-  private double uncertaintyX = 1.0, uncertaintyY = 1.0;
-  private double velocityX = 0.0, velocityY = 0.0;
-  private double lastUpdateTime = 0;
-
-  // ---CONSTRUCTORS---//
+  //---CONSTRUCTORS---//
   public teamSecondary() {
     super();
+    allies = new HashMap<Integer, ArrayList<Double>>(5);
+    ArrayList<Double> temp = new ArrayList<Double>(2);
+    temp.add(0.);
+    temp.add(0.);
+    allies.put(ALPHA, temp);
+    allies.put(BETA, temp);
+    allies.put(GAMMA, temp);
+    allies.put(ROCKY, temp);
+    allies.put(MARIO, temp);
+    ennemies = new ArrayList<IRadarResult>();
   }
 
-  // ---ABSTRACT-METHODS-IMPLEMENTATION---//
+  //---ABSTRACT-METHODS-IMPLEMENTATION---//
   public void activate() {
-    // ODOMETRY CODE
-    whoAmI = ROCKY;
-    for (IRadarResult o : detectRadar())
-      if (isSameDirection(o.getObjectDirection(), Parameters.NORTH))
-        whoAmI = UNDEFINED;
-    if (whoAmI == ROCKY) {
-      myX = Parameters.teamASecondaryBot1InitX;
-      myY = Parameters.teamASecondaryBot1InitY;
-    } else {
-      myX = Parameters.teamASecondaryBot2InitX;
-      myY = Parameters.teamASecondaryBot2InitY;
-    }
-
-    // Déterminer l'équipe
     myTeam = determineTeam();
+;
+    //ODOMETRY CODE
+    whoAmI = ROCKY;
+    for (IRadarResult o: detectRadar())
+      if (isSameDirection(o.getObjectDirection(),Parameters.NORTH)) whoAmI=MARIO;
+    if (myTeam) {
+    		if (whoAmI == ROCKY){
+    	      myX=Parameters.teamASecondaryBot1InitX;
+    	      myY=Parameters.teamASecondaryBot1InitY;
+    	      state=FIRSTTURNNORTHTASK;
+    	    } else {
+    	      myX=Parameters.teamASecondaryBot2InitX;
+    	      myY=Parameters.teamASecondaryBot2InitY;
+    	      state=FIRSTTURNSOUTHTASK;
+    	    }
 
-    // INIT
-    System.out.println(myTeam + " " + getHeading());
-    if (myTeam == TEAM_A) {
-      state = (whoAmI == ROCKY) ? TURNLEFTTASKINIT1 : TURNRIGHTTASKINIT1;
     } else {
-      state = (whoAmI == ROCKY) ? TURNRIGHTTASKINIT1 : TURNLEFTTASKINIT1;
+	    if (whoAmI == ROCKY){
+	      myX=Parameters.teamBSecondaryBot1InitX;
+	      myY=Parameters.teamBSecondaryBot1InitY;
+	      state=FIRSTTURNNORTHTASK;
+	    } else {
+	      myX=Parameters.teamBSecondaryBot2InitX;
+	      myY=Parameters.teamBSecondaryBot2InitY;
+	      state=FIRSTTURNSOUTHTASK;
+	    }
     }
-    isMoving = false;
-    isMovingBack = false;
-    oldAngle = getHeading();
-    receivedMessages = new ArrayList<>(); // Initialisation de la liste de messages
-
-    targetsBeingFocused = new ArrayList<>();
-    focusTimestamps = new ArrayList<>();
-
-    estimatedX = myX;
-    estimatedY = myY;
-    velocityX = 0.0;
-    velocityY = 0.0;
-    lastUpdateTime = System.currentTimeMillis();
+    
+    //INIT
+    isMoving=false;
+    stepNumber=0;
+    stepNumberMoveBack=0;
+    isMovingBack=false;
   }
-
   public void step() {
-    // Update odometry first
-    if(getHealth() > 0) {
-    updateOdometry();
-    }
-    
-    // DEBUG MESSAGE
-    if (whoAmI == ROCKY) {
-      String teamName = (myTeam == TEAM_A) ? "Team A" : "Team B";
-      sendLogMessage("#ROCKY " + teamName + " State: " + state + " Position: (" + (int)myX + "," + (int)myY + ")");
-    } else {
-      String teamName = (myTeam == TEAM_A) ? "Team A" : "Team B";
-      sendLogMessage("#MARIO " + teamName + " State: " + state + " Position: (" + (int)myX + "," + (int)myY + ")");
-    }
-    
-    // COMMUNICATION - Process messages before radar detection
-    ArrayList<String> messages = fetchAllMessages();
-    receivedMessages.clear(); // Efface les anciens messages à chaque step
-    for (String m : messages) {
-      if (Integer.parseInt(m.split(":")[1]) == whoAmI || Integer.parseInt(m.split(":")[1]) == TEAM) {
-        receivedMessages.add(m); // Stocke les messages pertinents
-        process(m);
-      }
-    }
-    
-    // Clean up old focus data
-    cleanupFocusData();
-    
-    // RADAR DETECTION
-    // Track if we found enemy in this radar scan
-    boolean enemyDetected = false;
-    boolean mainBotDetected = false;
-    int detectedMainBotId = -1;
+	stepNumber++;
 
-    for (IRadarResult o : detectRadar()) {
-      // Detect and dodge bullets - highest priority
-      if (o.getObjectType() == IRadarResult.Types.BULLET) {
-        // Log the bullet distance and take evasive action
-        double bulletDistance = o.getObjectDistance();
-        // System.out.println("BULLET DETECTED! Distance: " + bulletDistance);
-        
-        // Dodge bullet by moving perpendicular to its direction
-        stepTurn(Parameters.Direction.RIGHT);
-      }
+	if (getHealth()==0) state=SINK;
+	
+    //ODOMETRY CODE
+    if (isMoving){
+      myX+=Parameters.teamASecondaryBotSpeed*Math.cos(getHeading());
+      myY+=Parameters.teamASecondaryBotSpeed*Math.sin(getHeading());
+      realCoords();
+      isMoving=false;
+    }
+    if (isMovingBack) {
+		myX-=Parameters.teamAMainBotSpeed*Math.cos(myGetHeading());
+		myY-=Parameters.teamAMainBotSpeed*Math.sin(myGetHeading());
+		realCoords();
+		isMovingBack=false;
+    	}
+    //DEBUG MESSAGE
+    if (whoAmI == ROCKY) sendLogMessage("#ROCKY *thinks* he is rolling at position ("+(int)myX+", "+(int)myY+")." + "#state:"+state);
+    else sendLogMessage("#MARIO *thinks* he is rolling at position ("+(int)myX+", "+(int)myY+")."+ "#state:"+state);
 
-      // Detect enemies and send fire message
-      if (o.getObjectType() == IRadarResult.Types.OpponentMainBot
-        || o.getObjectType() == IRadarResult.Types.OpponentSecondaryBot) {
-        double enemyX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-        double enemyY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-        sendMessage(FIRE, enemyX, enemyY, o.getObjectDistance());
-        enemyDetected = true;
-        
-        // If we detect a main bot, store its approximate ID based on position
-        if (o.getObjectType() == IRadarResult.Types.OpponentMainBot) {
-          mainBotDetected = true;
-          // Generate a simple ID based on position (this is a simplification)
-          detectedMainBotId = (int)(enemyX * 10 + enemyY);
-        }
+    //RADAR DETECTION
+    for (IRadarResult o: detectRadar()){
+      if (o.getObjectType()== Types.OpponentMainBot || o.getObjectType()== Types.OpponentSecondaryBot) {
+        double enemyX=myX+o.getObjectDistance()*Math.cos(o.getObjectDirection());
+        double enemyY=myY+o.getObjectDistance()*Math.sin(o.getObjectDirection());
+        broadcast(whoAmI+":"+TEAM+":"+FIRE+":"+(o.getObjectType()== Types.OpponentMainBot?MAIN:SECONDARY)+":"+enemyX+":"+enemyY+":"+OVER);
+/*        for (IRadarResult last : lastSeenEnnemies) {
+        		double eX = myX+last.getObjectDistance()*Math.cos(last.getObjectDirection());
+        		double eY = myY+last.getObjectDistance()*Math.sin(last.getObjectDirection());
+        		if (Math.abs(eX-enemyX)<1 && Math.abs(eY-enemyY)<1) {
+        			broadcast(whoAmI+":"+TEAM+":"+CAMP+":"+enemyX+":"+enemyY+":"+OVER);
+        			//System.out.println("trouvé un camp en "+enemyX +" "+enemyY);
+        		}
+        }*/
+        ennemies.add(o);
       }
-      
-      // Check for wrecks - if an enemy became a wreck, it's dead
-      if (o.getObjectType() == IRadarResult.Types.Wreck && state == FOLLOWTASK) {
-        state = MOVETASK; // Reset to movement state to find new enemies
-      }
-      
-      // Follow MainBot if detected and not already being focused by a teammate
-      if (o.getObjectType() == IRadarResult.Types.OpponentMainBot && 
-          !isTargetBeingFocused(detectedMainBotId) && 
-          (currentlyFocusedTarget == -1 || currentlyFocusedTarget == detectedMainBotId)) {
-        
-        state = FOLLOWTASK;
-        currentlyFocusedTarget = detectedMainBotId;
-        
-        // Send focus message at regular intervals
-        long currentTime = System.currentTimeMillis();
-        if (currentTime - lastFocusMessageTime > FOCUS_MESSAGE_INTERVAL) {
-          sendMessage(FOCUSING, detectedMainBotId, enemyDetected);
-          lastFocusMessageTime = currentTime;
-        }
-      }
-      
-      // Handle orientation and movement towards enemy
-      if (state == FOLLOWTASK && o.getObjectType() == IRadarResult.Types.OpponentMainBot && 
-          (currentlyFocusedTarget == -1 || currentlyFocusedTarget == detectedMainBotId)) {
-        // Track enemy as it moves
-        double enemyDirection = o.getObjectDirection();
-        double headingDiff = normalizeAngle(enemyDirection - getHeading());
-        
-        // Always adjust orientation to keep tracking the enemy
-        // Even for small deviations in enemy movement
-        if (Math.abs(headingDiff) > ANGLEPRECISION) {
-          // Turn towards enemy - continuous tracking
-          if (headingDiff > 0) {
-            stepTurn(Parameters.Direction.RIGHT);
-          } else {
-            stepTurn(Parameters.Direction.LEFT);
-          }
-          return; // Exit to complete tracking adjustment first
-        }
-        
-        // Then decide whether to approach or back away
-        if (o.getObjectDistance() <= 500) {
-          myMoveBack();
-        } else {
-          myMove();
-        }
-      }
+    }
+    //lastSeenEnnemies = new ArrayList<>(ennemies);
+    //COMMUNICATION
+    broadcast(whoAmI+":"+TEAM+":"+POSITION+":"+myX+":"+myY+":"+myGetHeading()+":"+OVER);
+
+    ennemies.clear();
+    for (IRadarResult o: detectRadar()){
+    		//détection des ennemies
+	  if ((o.getObjectType()== Types.OpponentMainBot &&
+	      o.getObjectDistance() <= Parameters.teamBMainBotFrontalDetectionRange + 100) ||
+	      (o.getObjectType()== Types.OpponentSecondaryBot &&
+	      o.getObjectDistance() <= Parameters.teamASecondaryBotFrontalDetectionRange - 150)) {
+	    ennemies.add(o);
+	    if (state==MOVETASK)
+	      state=FLEE;
+	  }
+	  //détection de collision avec un membre de mon équipe ou une épave
+	  	if (o.getObjectDistance() < 120 && o.getObjectType() != Types.BULLET) {
+			if (state==MOVETASK) {
+				//System.out.println("detected something, moving back");
+				state=MOVEBACKTASK;
+				stepNumberMoveBack = stepNumber;
+			}
+		}
+      /*if (keepGoing && (o.getObjectType()==IRadarResult.Types.TeamMainBot 
+    		  || o.getObjectType()==IRadarResult.Types.TeamSecondaryBot 
+    		  || o.getObjectType()==IRadarResult.Types.Wreck)) {
+    	  	if (o.getObjectDistance() < o.getObjectRadius()+Parameters.teamAMainBotRadius+MINDISTANCE) {
+    	  		//System.out.println("secondary detecct an obstacle - > keepGoin = false");
+    	  		//System.out.println(whoAmI+" getObjectDirection = " + o.getObjectDirection());
+    	  		sendLogMessage("detecct an obstacle - > keepGoin = false");
+    	  		keepGoing = false;
+    	  		turnDirection = o.getObjectDirection() > 0 ? Parameters.Direction.LEFT : Parameters.Direction.RIGHT;
+    	  		turnAngle = o.getObjectDirection() > 0 ? -MINANGLE : MINANGLE;
+    	  	}
+      }*/
     }
     
-    // If we're following an enemy but didn't detect it this scan, reset focus and search mode
-    if (state == FOLLOWTASK && !enemyDetected) {
-      currentlyFocusedTarget = -1;
-      state = MOVETASK;
-    }
+    //AUTOMATON
     
-    // If we were focusing on a main bot but it's now being focused by another secondary bot
-    if (state == FOLLOWTASK && mainBotDetected && isTargetBeingFocused(currentlyFocusedTarget) && 
-        currentlyFocusedTarget != -1 && whoAmI != targetsBeingFocused.get(targetsBeingFocused.indexOf(currentlyFocusedTarget) - 1)) {
-      currentlyFocusedTarget = -1;
-      state = MOVETASK;
-    }
+    /* when bot is sticked to wall */
+    if (myX<=Parameters.teamASecondaryBotRadius) {
+		if (isHeading(Parameters.EAST)) {
+		state=MOVETASK;
+		return;
+	}
+	state=TURNEASTTASK;
+	return;
+	}
+	if (myX>=(3000-Parameters.teamASecondaryBotRadius)) {
+		if (isHeading(Parameters.WEST)) {
+			state=MOVETASK;
+			return;
+		}
+		state=TURNWESTTASK;
+		return;
+	}
+	if (myY<=Parameters.teamASecondaryBotRadius) {
+		if (isHeading(Parameters.SOUTH)) {
+			state=MOVETASK;
+			return;
+		}
+		state=TURNSOUTHTASK;
+		return;
+	}
+	if (myY>=(2000-Parameters.teamASecondaryBotRadius)) {
+		state=TURNNORTHTASK;
+		if (isHeading(Parameters.NORTH)) {
+			state=MOVETASK;
+			return;
+		}
+		return;
+	}
+	
+	//FIRST MOVE 
+	if (state==FIRSTMOVETASK) {
+		myMove(); //And what to do when blind blocked?
+		if (whoAmI == MARIO) {
+			if ((myTeam && myY > 1250) || (!myTeam && myY > 1800)) { 
+				if (myTeam) {
+					state=TURNEASTTASK;	    			  
+				} else {
+					state = TURNWESTTASK;
+				}
+				return;
+			}
+		} else { // ROCKY
+			if ((myTeam && myY < 300) || (!myTeam && myY < 650)) {
+				if (myTeam) {
+					state=TURNEASTTASK;	    			  
+				} else {
+					state = TURNWESTTASK;
+				}
+				return;
+			}
+		}	
+	}
+	
+	if (state==FIRSTTURNNORTHTASK && !(isHeading(myTeam ? 5*Math.PI/6 : Math.PI/6))) {
+		// Turn toward southeast (team A) or northeast (team B)
+		double targetAngle = myTeam ? 5*Math.PI/6 : Math.PI/6;
+		if ((myTeam && (myGetHeading() < Math.PI/12 || myGetHeading() > 11*Math.PI/6)) || 
+			(!myTeam && myGetHeading() > 7*Math.PI/6)) {
+			stepTurn(Direction.LEFT);
+		}
+		else {
+			stepTurn(Direction.RIGHT);
+		}
+		return;
+	}
+	if (state==FIRSTTURNNORTHTASK && isHeading(myTeam ? 5*Math.PI/6 : Math.PI/6)) {
+		state=FIRSTMOVETASK;
+		myMove();
+		return;
+	}
+	if (state==FIRSTTURNSOUTHTASK && !(isHeading(myTeam ? Math.PI/6 : 5*Math.PI/6))) {
+		// Turn toward northeast (team A) or southeast (team B)
+		double targetAngle = myTeam ? Math.PI/6 : 5*Math.PI/6;
+		if ((myTeam && myGetHeading() < 5*Math.PI/6 && myGetHeading() > Math.PI/6) || 
+			(!myTeam && (myGetHeading() < Math.PI/6 || myGetHeading() > 5*Math.PI/6))) {
+			stepTurn(Direction.LEFT);
+		}
+		else {
+			stepTurn(Direction.RIGHT);
+		}
+		return;
+	}
+	if (state==FIRSTTURNSOUTHTASK && isHeading(myTeam ? Math.PI/6 : 5*Math.PI/6)) {
+		state=FIRSTMOVETASK;
+		myMove();
+		return;
+	}
 
-    // --- AUTOMATE DE POSITIONNEMENT ---//
-    if (state == TURNLEFTTASKINIT1) {
-      double targetDirection = (myTeam == TEAM_A) ? Parameters.NORTH : Parameters.SOUTH;
-      if (!isSameDirection(getHeading(), targetDirection)) {
-        stepTurn(Parameters.Direction.LEFT);
-        return;
+    /* 4 directions turning */
+    if (state==TURNNORTHTASK && !(isHeading(Parameters.NORTH))) {
+    		//System.out.println("getHeading " + (myGetHeading()*180/Math.PI));
+      if (myGetHeading() < Math.PI / 2 || myGetHeading() > 3 * Math.PI / 2) {
+        stepTurn(Direction.LEFT);
       }
-      state = MOVETASK;
+      else {
+    	  	//System.out.println("else");
+        stepTurn(Direction.RIGHT);
+      }
+      return;
+    }
+    if (state==TURNNORTHTASK && isHeading(Parameters.NORTH)) {
+      state=MOVETASK;
       myMove();
       return;
     }
-
-    if (state == TURNRIGHTTASKINIT1) {
-      double targetDirection = (myTeam == TEAM_A) ? Parameters.SOUTH : Parameters.NORTH;
-      if (!isSameDirection(getHeading(), targetDirection)) {
-        stepTurn(Parameters.Direction.RIGHT);
-        return;
+    if (state==TURNSOUTHTASK && !(isHeading(Parameters.SOUTH))) {
+      if (myGetHeading() < Math.PI / 2 || myGetHeading() > 3 * Math.PI / 2) {
+        stepTurn(Direction.RIGHT);
       }
-      state = MOVETASK;
-      myMove();
-      return;
-    }
-
-    if (state == MOVETASK) {
-      if (detectFront().getObjectType() == IFrontSensorResult.Types.NOTHING) {
-        myMove();
-      } else {
-        if (myTeam == TEAM_A) {
-          state = (whoAmI == ROCKY) ? TURNRIGHTTASKINIT2 : TURNLEFTTASKINIT2;
-          stepTurn((whoAmI == ROCKY) ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
-        } else {
-          state = (whoAmI == ROCKY) ? TURNLEFTTASKINIT2 : TURNRIGHTTASKINIT2;
-          stepTurn((whoAmI == ROCKY) ? Parameters.Direction.LEFT : Parameters.Direction.RIGHT);
-        }
-        oldAngle = getHeading();
+      else {
+        stepTurn(Direction.LEFT);
       }
       return;
     }
-
-    if ((state == TURNRIGHTTASKINIT2 || state == TURNLEFTTASKINIT2) && !isSameDirection(getHeading(),
-        oldAngle + (state == TURNRIGHTTASKINIT2 ? Parameters.RIGHTTURNFULLANGLE : -Parameters.RIGHTTURNFULLANGLE))) {
-      stepTurn(state == TURNRIGHTTASKINIT2 ? Parameters.Direction.RIGHT : Parameters.Direction.LEFT);
+    if (state==TURNSOUTHTASK && isHeading(Parameters.SOUTH)) {
+    		//System.out.println("heading de south "+ (getHeading()*180/Math.PI));
+    		state=MOVETASK;
+    		myMove();
+    		return;
+    }
+    if (state==TURNEASTTASK && !(isHeading(Parameters.EAST))) {
+      if (myGetHeading() < Math.PI && myGetHeading() > 0) {
+        stepTurn(Direction.LEFT);
+      }
+      else {
+        stepTurn(Direction.RIGHT);
+      }
       return;
     }
-    if ((state == TURNRIGHTTASKINIT2 || state == TURNLEFTTASKINIT2) && isSameDirection(getHeading(),
-        oldAngle + (state == TURNRIGHTTASKINIT2 ? Parameters.RIGHTTURNFULLANGLE : -Parameters.RIGHTTURNFULLANGLE))) {
-      state = SINK;
+    if (state==TURNEASTTASK && isHeading(Parameters.EAST)) {
+      state=MOVETASK;
       myMove();
       return;
     }
+    if (state==TURNWESTTASK && !(isHeading(Parameters.WEST))) {
+      if (myGetHeading() < Math.PI && myGetHeading() > 0) {
+        stepTurn(Direction.RIGHT);
+      }
+      else {
+        stepTurn(Direction.LEFT);
+      }
+      return;
+    }
+    if (state==TURNWESTTASK && isHeading(Parameters.WEST)) {
+      state=MOVETASK;
+      myMove();
+      return;
+    }
+    
+    
+    if (state==MOVETASK) {
+    		if (detectFront().getObjectType() == IFrontSensorResult.Types.WALL) {	
+    			if (whoAmI == MARIO) {
+    				if ((myX>2800 && myY>1800) || (myX > 2800 && myY<200) || (myX<200 && myY<200) || (myX<200 && myY>1800)) {
+    					state=TURNLEFTTASK;
+    	    		  		endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+    	    		  		stepTurn(Direction.LEFT);
+    	    		  		return;
+    				} else if (myX>2800 || myX<200) {
+    					if (isHeading(Parameters.EAST) || isHeading(Parameters.WEST)){
+    						state=TURNLEFTTASK;
+    			  			endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+    			  			stepTurn(Direction.LEFT);
+    			  			return;
+    					} else {
+    						myMove();
+    						return;
+    					}
+    				} else if (myY>1800 || myY<200){
+    					if (isHeading(Parameters.NORTH) || isHeading(Parameters.SOUTH)){
+    						state=TURNLEFTTASK;
+    			  			endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+    			  			stepTurn(Direction.LEFT);
+    			  			return;
+    					} else {
+    						myMove();
+    						return;
+    					}
+    				} else {
+    					myMove();
+    					return;
+    				}
+    				
+    		    	 /* if ((myY>1800 || myY<200) && (myX>2800 || myX<200)){ //mario arrive au coin
+    		    		  System.out.println("hohohoho");
+    		    		  state=TURNLEFTTASK;
+    		    		  endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+    		    		  stepTurn(Parameters.Direction.LEFT);
+    		    		  return;
+    		    	  }
+    		    	   
+    		    	  if (myY>1800 || myY<200 || myX>2800 || myX<200) { //quand c'est pas le coin
+    		    		  System.out.println("ohllhlhhlh");
+    		    		  state=TURNLEFTTASK;
+    		    		  endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+    		    		  stepTurn(Parameters.Direction.LEFT);
+    		    		  return;
+    		    	  } else {
+    		    		  myMove();
+    		    		  return;
+    		    	  }*/
+    			} else { //rocky fait un tour normal
+    				//System.out.println("hehehehe");
+	    		  state=TURNLEFTTASK;
+	    		  endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+	    		  stepTurn(Direction.LEFT);
+	    		  return;
+    			}
+    		} 
+    		myMove();
+    		return;
+    		/*else {
+    			if (detectFront().getObjectType() == IFrontSensorResult.Types.NOTHING) {
+    		        myMove(); 
+    		        	return;
+    		     } else {
+    		    	 	System.out.println("il existe des cas dans le else");
+    		    	 	if (Math.random() < 0.5) {	    	 		
+    		    	 		state=TURNLEFTTASK;
+    		    	 		endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+    		    	 		stepTurn(Parameters.Direction.LEFT);
+    		    	 	} else {
+    		    	 		state=TURNRIGHTTASK;
+    		    	 		endTaskDirection = getHeading() + Parameters.RIGHTTURNFULLANGLE;
+    		    	 		stepTurn(Parameters.Direction.RIGHT);
+    		    	 	}
+    		    	 	return;
+    		     }
+    		}
+    	*/
+	    
+    }
+    
+    if (state==TURNRIGHTTASK) {
+		if (isHeading(endTaskDirection)) {
+			state=MOVETASK;
+			myMove();
+		} else {
+			stepTurn(Direction.RIGHT);
+		}
+		return;
+	}
+    
+    if (state==TURNLEFTTASK) {
+		if (isHeading(endTaskDirection)) {
+			state=MOVETASK;
+			myMove();
+		} else {
+			stepTurn(Direction.LEFT);
+		}
+		return;
+	}
+    
+    if (state==MOVEBACKTASK) {
+    		if (stepNumber < stepNumberMoveBack + 25) {
+			myMoveBack();
+			return;
+		} else {
+			if (Math.random() < 0.5) {	    	 		
+    	 		state=TURNLEFTTASK;
+    	 		endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
+    	 		stepTurn(Direction.LEFT);
+	    	 	} else {
+	    	 		state=TURNRIGHTTASK;
+	    	 		endTaskDirection = getHeading() + Parameters.RIGHTTURNFULLANGLE;
+	    	 		stepTurn(Direction.RIGHT);
+	    	 	}
+			return;
+		}
+    }
+    
+  
 
-    // --- AUTOMATE FIN DE POSITIONNEMENT ---//
+    if (state==FLEE) {
+    		if ((myX>2900 || myX<100) && (myY>1900 || myX<100)){
+			state=TURNRIGHTTASK;
+		  	endTaskDirection = getHeading() + Parameters.RIGHTTURNFULLANGLE;
+		  	stepTurn(Direction.RIGHT);
+		  	return;
+		} else if (myX>2900 || myX<100) {
+			if (isHeading(Parameters.EAST) || isHeading(Parameters.WEST)){
+				state=TURNRIGHTTASK;
+	  			endTaskDirection = getHeading() + Parameters.RIGHTTURNFULLANGLE;
+	  			stepTurn(Direction.RIGHT);
+	  			return;
+			} else {
+				moveBack();
+	    			myX-=Parameters.teamASecondaryBotSpeed*Math.cos(getHeading());
+	    			myY-=Parameters.teamASecondaryBotSpeed*Math.sin(getHeading());
+	    			realCoords();
+	    			if (ennemies.isEmpty()) {
+	    				state=MOVETASK;
+	    			}
+	    			return;
+			}
+		} else if (myY>1900 || myY<100){
+			if (isHeading(Parameters.NORTH) || isHeading(Parameters.SOUTH)){
+				state=TURNRIGHTTASK;
+	  			endTaskDirection = getHeading() + Parameters.RIGHTTURNFULLANGLE;
+	  			stepTurn(Direction.RIGHT);
+	  			return;
+			} else {
+				moveBack();
+    				myX-=Parameters.teamASecondaryBotSpeed*Math.cos(getHeading());
+    				myY-=Parameters.teamASecondaryBotSpeed*Math.sin(getHeading());
+    				realCoords();
+    				if (ennemies.isEmpty()) {
+    					state=MOVETASK;
+    				}
+    				return;
+			}
+		} else {
+			moveBack();
+			myX-=Parameters.teamASecondaryBotSpeed*Math.cos(getHeading());
+			myY-=Parameters.teamASecondaryBotSpeed*Math.sin(getHeading());
+			realCoords();
+			if (ennemies.isEmpty()) {
+				state=MOVETASK;
+			}
+			return;
+		}
+    		
+    }
 
-    if (state == SINK) {
-      state = MOVETASK;
+    if (state==SINK) {
+      //myMove();
       return;
     }
     if (true) {
       return;
     }
   }
-
-  // --- MÉTHODES D'ODOMÉTRIE ET DE DÉTECTION DE COLLISION ---
-  private void updateOdometry() {
-    boolean collision = detectCollision();
-    if (isMoving) {
-      updatePosition(Parameters.teamASecondaryBotSpeed, collision);
-      isMoving = false;
-    } else if (isMovingBack) {
-      updatePosition(-Parameters.teamASecondaryBotSpeed, collision);
-      isMovingBack = false;
-    }
-    
-    refinePositionWithRadar();
-  }
-  
-  private void updatePosition(double speed, boolean collision) {
-    if (!collision) {
-      long currentTime = System.currentTimeMillis();
-      double deltaTime = (currentTime - lastUpdateTime) / 1000.0;
-      if (deltaTime <= 0) deltaTime = 0.01;
-      lastUpdateTime = currentTime;
-      
-      double newX = myX + speed * Math.cos(getHeading());
-      double newY = myY + speed * Math.sin(getHeading());
-      
-      double instantVelocityX = (newX - myX) / deltaTime;
-      double instantVelocityY = (newY - myY) / deltaTime;
-      
-      double alpha = 0.3;
-      velocityX = alpha * instantVelocityX + (1 - alpha) * velocityX;
-      velocityY = alpha * instantVelocityY + (1 - alpha) * velocityY;
-      
-      double predictedX = estimatedX + velocityX * deltaTime;
-      double predictedY = estimatedY + velocityY * deltaTime;
-      
-      double measurementWeight = 0.7;
-      estimatedX = kalmanFilter(predictedX, newX, uncertaintyX, measurementWeight);
-      estimatedY = kalmanFilter(predictedY, newY, uncertaintyY, measurementWeight);
-      
-      myX = estimatedX;
-      myY = estimatedY;
-      
-
-    } else if (speed < 0) {
-      velocityX = 0;
-      velocityY = 0;
-    }
-  }
-  
-  private double kalmanFilter(double predicted, double measured, double uncertainty, double measurementWeight) {
-    double kalmanGain = uncertainty / (uncertainty + SENSOR_NOISE);
-    kalmanGain = (1 - measurementWeight) * kalmanGain + measurementWeight;
-    double newEstimated = predicted + kalmanGain * (measured - predicted);
-    double newUncertainty = (1 - kalmanGain) * uncertainty + PROCESS_NOISE;
-    
-    if (predicted == estimatedX) {
-      uncertaintyX = newUncertainty;
-    } else {
-      uncertaintyY = newUncertainty;
-    }
-    
-    return newEstimated;
-  }
-  
-  private void refinePositionWithRadar() {
-    for (IRadarResult o : detectRadar()) {
-      if (o.getObjectType() == IRadarResult.Types.Wreck && o.getObjectDistance() < 400) {
-        double wreckX = myX + o.getObjectDistance() * Math.cos(o.getObjectDirection());
-        double wreckY = myY + o.getObjectDistance() * Math.sin(o.getObjectDirection());
-        
-        double robotX = wreckX - o.getObjectDistance() * Math.cos(o.getObjectDirection());
-        double robotY = wreckY - o.getObjectDistance() * Math.sin(o.getObjectDirection());
-        
-        estimatedX = kalmanFilter(estimatedX, robotX, uncertaintyX * 1.5, 0.3);
-        estimatedY = kalmanFilter(estimatedY, robotY, uncertaintyY * 1.5, 0.3);
-        
-        myX = estimatedX;
-        myY = estimatedY;
-        break;
-      }
-    }
-  }
-
-  private boolean detectCollision() {
-    for (IRadarResult o : detectRadar()) {
-      if (isMoving && o.getObjectDistance() < COLLISION_THRESHOLD &&
-          isRoughlySameDirection(o.getObjectDirection(), getHeading())) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  // ---UTILITIES---//
-  // Normaliser un angle pour qu'il soit entre -PI et PI
-  private double normalizeAngle(double angle) {
-    while (angle > Math.PI)
-      angle -= 2 * Math.PI;
-    while (angle < -Math.PI)
-      angle += 2 * Math.PI;
-    return Math.abs(angle);
-  }
-
-  private boolean isSameDirection(double dir1, double dir2) {
-    double diff = normalizeAngle(dir1 - dir2);
-    return diff < ANGLEPRECISION;
-  }
-  
-  private boolean isRoughlySameDirection(double dir1, double dir2) {
-    return Math.abs(normalizeAngle(dir1) - normalizeAngle(dir2)) < Math.PI / 6.0; // Using pi/6 (30 degrees) for rough comparison
-  }
-
-  private void myMove() {
-    isMoving = true;
+  private void myMove(){
+    isMoving=true;
     move();
   }
-  
   private void myMoveBack() {
-    isMovingBack = true;
-    moveBack();
+	 isMovingBack=true;
+	 moveBack();
+  }
+  private double myGetHeading(){
+    return normalizeRadian(getHeading());
+  }
+  private double normalizeRadian(double angle){
+    double result = angle;
+    while(result<0) result+=2*Math.PI;
+    while(result>=2*Math.PI) result-=2*Math.PI;
+    return result;
   }
 
-  /**
-   * Détermine à quelle équipe appartient ce robot
-   * 
-   * @return TEAM_A ou TEAM_B
-   */
-  private int determineTeam() {
+  private boolean isSameDirection(double dir1, double dir2){
+    return Math.abs(dir1-dir2)<ANGLEPRECISION;
+  }
+  private boolean isHeading(double dir){
+    return Math.abs(Math.sin(normalizeRadian(getHeading())-dir))<ANGLEPRECISIONBIS;
+  }
+  private void realCoords() {
+    myX = myX < 0 ? 0 : myX;
+    myX = myX > 3000 ? 3000 : myX;
+    myY = myY < 0 ? 0 : myY;
+    myY = myY > 2000 ? 2000 : myY;
+  }
+
+  private boolean determineTeam() {
     if (isSameDirection(getHeading(), Parameters.EAST)) {
-      return TEAM_A;
+      return true;
     }
-    return TEAM_B;
-  }
-
-  /**
-   * Sends a formatted message through broadcast
-   * 
-   * @param messageType Type of message (FIRE, FALLBACK, etc.)
-   * @param data        Array of data to include in the message
-   */
-  private void sendMessage(int messageType, Object... data) {
-    StringBuilder message = new StringBuilder();
-    message.append(whoAmI).append(":").append(TEAM).append(":").append(messageType);
-
-    if (data != null) {
-      for (Object datum : data) {
-        message.append(":").append(datum);
-      }
-    }
-
-    message.append(":").append(OVER);
-    broadcast(message.toString());
-  }
-
-  /**
-   * Traite un message reçu en fonction de son type
-   * 
-   * @param message Le message à traiter
-   */
-  private void process(String message) {
-    String[] parts = message.split(":");
-    if (parts.length < 3) return;
-    
-    int sender = Integer.parseInt(parts[0]);
-    int messageType = Integer.parseInt(parts[2]);
-    
-    switch (messageType) {
-      case FIRE:
-        // Do nothing 
-        break;
-
-      case FALLBACK:
-        // Traite un message de repli
-        // À implémenter selon les besoins
-        break;
-
-      case ROGER:
-        // Traite un message d'acquittement
-        // À implémenter selon les besoins
-        break;
-      
-      case COMBAT: 
-        state = MOVETASK;
-        break;
-
-      case FOCUSING:
-        // Process focus notification from teammate
-        if (sender != whoAmI && parts.length >= 4) {
-          int targetId = Integer.parseInt(parts[3]);
-          updateFocusInformation(sender, targetId);
-        }
-        break;
-
-      default:
-        // Message de type inconnu
-        break;
-    }
-  }
-
-  /**
-   * Clean up old focus data that hasn't been updated recently
-   */
-  private void cleanupFocusData() {
-    long currentTime = System.currentTimeMillis();
-    for (int i = 0; i < targetsBeingFocused.size(); i++) {
-      if (currentTime - focusTimestamps.get(i) > FOCUS_TIMEOUT) {
-        targetsBeingFocused.remove(i);
-        focusTimestamps.remove(i);
-        i--;
-      }
-    }
-  }
-  
-  /**
-   * Check if a target is already being focused by a teammate
-   * 
-   * @param targetId ID of the target to check
-   * @return true if already focused, false otherwise
-   */
-  private boolean isTargetBeingFocused(int targetId) {
-    // If I'm focusing this target, it's not considered as "already focused by a teammate"
-    if (targetId == currentlyFocusedTarget) {
-      return false;
-    }
-    
-    return targetsBeingFocused.contains(targetId);
-  }
-
-  /**
-   * Update focus information when receiving a focus message
-   */
-  private void updateFocusInformation(int sender, int targetId) {
-    // Check if this target is already in our list
-    int index = targetsBeingFocused.indexOf(targetId);
-    
-    if (index == -1) {
-      // New focus - add to the list
-      targetsBeingFocused.add(targetId);
-      focusTimestamps.add(System.currentTimeMillis());
-    } else {
-      // Update timestamp for existing focus
-      focusTimestamps.set(index, System.currentTimeMillis());
-    }
+    return false;
   }
 }
