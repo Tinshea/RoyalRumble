@@ -19,12 +19,6 @@ import java.util.Random;
 
 public class teamMain extends Brain {
 
-  /************************* IMPORTANT ******************************/
-  /** Modifier cette variable en fonction du côté qui nous est attribué **/
-  // - à gauche => true
-  // - à droite => false
-  /*********************************************************************/
-
   // ---PARAMETERS---//
   private static final double ANGLEPRECISION = 0.001;
   private static final double ANGLEPRECISIONBIS = 0.01;
@@ -274,7 +268,6 @@ public class teamMain extends Brain {
       if ((o.getObjectDistance() < 120 && o.getObjectType() != Types.BULLET)
           || detectFront().getObjectType() == IFrontSensorResult.Types.WALL) {
         if (currentState == MOVETASK) {
-          // System.out.println("detected something, must move back");
           currentState = MOVEBACKTASK;
           backMoveStartStep = currentStep;
           return;
@@ -630,7 +623,6 @@ public class teamMain extends Brain {
     }
 
     if (currentState == SINK) {
-      // myMove();
       return;
     }
     if (true) {

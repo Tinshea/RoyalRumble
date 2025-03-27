@@ -2,7 +2,7 @@
  * Simovies - Eurobot 2015 Robomovies Simulator.
  * Copyright (C) 2014 <Binh-Minh.Bui-Xuan@ens-lyon.org>.
  * GPL version>=3 <http://www.gnu.org/licenses/>.
- * $Id: algorithms/Stage1.java 2014-10-18 buixuan.
+ * $Id: algorithms/teamSecondary.java 2025-03-27 buixuan.
  * ******************************************************/
 package algorithms;
 
@@ -18,14 +18,6 @@ import java.util.HashMap;
 
 
 public class teamSecondary extends Brain {
-	
-	/*************************   IMPORTANT   ******************************/
-	/** Modifier cette variable en fonction du côté qui nous est attribué **/
-	  	// - à gauche => true
-		// - à droite => false
-
-	/*********************************************************************/
-	
 
   //---PARAMETERS---//
   private static final double ANGLEPRECISION = 0.001;
@@ -152,14 +144,6 @@ public class teamSecondary extends Brain {
         double enemyX=myX+o.getObjectDistance()*Math.cos(o.getObjectDirection());
         double enemyY=myY+o.getObjectDistance()*Math.sin(o.getObjectDirection());
         broadcast(whoAmI+":"+TEAM+":"+FIRE+":"+(o.getObjectType()== Types.OpponentMainBot?MAIN:SECONDARY)+":"+enemyX+":"+enemyY+":"+OVER);
-/*        for (IRadarResult last : lastSeenEnnemies) {
-        		double eX = myX+last.getObjectDistance()*Math.cos(last.getObjectDirection());
-        		double eY = myY+last.getObjectDistance()*Math.sin(last.getObjectDirection());
-        		if (Math.abs(eX-enemyX)<1 && Math.abs(eY-enemyY)<1) {
-        			broadcast(whoAmI+":"+TEAM+":"+CAMP+":"+enemyX+":"+enemyY+":"+OVER);
-        			//System.out.println("trouvé un camp en "+enemyX +" "+enemyY);
-        		}
-        }*/
         ennemies.add(o);
       }
     }
@@ -181,23 +165,10 @@ public class teamSecondary extends Brain {
 	  //détection de collision avec un membre de mon équipe ou une épave
 	  	if (o.getObjectDistance() < 120 && o.getObjectType() != Types.BULLET) {
 			if (state==MOVETASK) {
-				//System.out.println("detected something, moving back");
 				state=MOVEBACKTASK;
 				stepNumberMoveBack = stepNumber;
 			}
 		}
-      /*if (keepGoing && (o.getObjectType()==IRadarResult.Types.TeamMainBot 
-    		  || o.getObjectType()==IRadarResult.Types.TeamSecondaryBot 
-    		  || o.getObjectType()==IRadarResult.Types.Wreck)) {
-    	  	if (o.getObjectDistance() < o.getObjectRadius()+Parameters.teamAMainBotRadius+MINDISTANCE) {
-    	  		//System.out.println("secondary detecct an obstacle - > keepGoin = false");
-    	  		//System.out.println(whoAmI+" getObjectDirection = " + o.getObjectDirection());
-    	  		sendLogMessage("detecct an obstacle - > keepGoin = false");
-    	  		keepGoing = false;
-    	  		turnDirection = o.getObjectDirection() > 0 ? Parameters.Direction.LEFT : Parameters.Direction.RIGHT;
-    	  		turnAngle = o.getObjectDirection() > 0 ? -MINANGLE : MINANGLE;
-    	  	}
-      }*/
     }
     
     //AUTOMATON
@@ -297,12 +268,10 @@ public class teamSecondary extends Brain {
 
     /* 4 directions turning */
     if (state==TURNNORTHTASK && !(isHeading(Parameters.NORTH))) {
-    		//System.out.println("getHeading " + (myGetHeading()*180/Math.PI));
       if (myGetHeading() < Math.PI / 2 || myGetHeading() > 3 * Math.PI / 2) {
         stepTurn(Direction.LEFT);
       }
       else {
-    	  	//System.out.println("else");
         stepTurn(Direction.RIGHT);
       }
       return;
@@ -322,7 +291,6 @@ public class teamSecondary extends Brain {
       return;
     }
     if (state==TURNSOUTHTASK && isHeading(Parameters.SOUTH)) {
-    		//System.out.println("heading de south "+ (getHeading()*180/Math.PI));
     		state=MOVETASK;
     		myMove();
     		return;
@@ -390,26 +358,7 @@ public class teamSecondary extends Brain {
     					return;
     				}
     				
-    		    	 /* if ((myY>1800 || myY<200) && (myX>2800 || myX<200)){ //mario arrive au coin
-    		    		  System.out.println("hohohoho");
-    		    		  state=TURNLEFTTASK;
-    		    		  endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
-    		    		  stepTurn(Parameters.Direction.LEFT);
-    		    		  return;
-    		    	  }
-    		    	   
-    		    	  if (myY>1800 || myY<200 || myX>2800 || myX<200) { //quand c'est pas le coin
-    		    		  System.out.println("ohllhlhhlh");
-    		    		  state=TURNLEFTTASK;
-    		    		  endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
-    		    		  stepTurn(Parameters.Direction.LEFT);
-    		    		  return;
-    		    	  } else {
-    		    		  myMove();
-    		    		  return;
-    		    	  }*/
     			} else { //rocky fait un tour normal
-    				//System.out.println("hehehehe");
 	    		  state=TURNLEFTTASK;
 	    		  endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
 	    		  stepTurn(Direction.LEFT);
@@ -418,25 +367,6 @@ public class teamSecondary extends Brain {
     		} 
     		myMove();
     		return;
-    		/*else {
-    			if (detectFront().getObjectType() == IFrontSensorResult.Types.NOTHING) {
-    		        myMove(); 
-    		        	return;
-    		     } else {
-    		    	 	System.out.println("il existe des cas dans le else");
-    		    	 	if (Math.random() < 0.5) {	    	 		
-    		    	 		state=TURNLEFTTASK;
-    		    	 		endTaskDirection = getHeading() + Parameters.LEFTTURNFULLANGLE;
-    		    	 		stepTurn(Parameters.Direction.LEFT);
-    		    	 	} else {
-    		    	 		state=TURNRIGHTTASK;
-    		    	 		endTaskDirection = getHeading() + Parameters.RIGHTTURNFULLANGLE;
-    		    	 		stepTurn(Parameters.Direction.RIGHT);
-    		    	 	}
-    		    	 	return;
-    		     }
-    		}
-    	*/
 	    
     }
     
@@ -532,7 +462,6 @@ public class teamSecondary extends Brain {
     }
 
     if (state==SINK) {
-      //myMove();
       return;
     }
     if (true) {
